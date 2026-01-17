@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mb-6">
+    <h1 class="text-3xl font-bold text-gray-800">Network Devices</h1>
+    <p class="text-gray-600 mt-2">Monitor all devices on your network</p>
+</div>
+
+<!-- Filters -->
+<div class="card mb-6">
+    <div class="flex flex-wrap gap-4 items-center">
+        <div>
+            <label class="inline-flex items-center">
+                <input type="checkbox" id="filter-online" class="form-checkbox" checked onchange="loadDevices()">
+                <span class="ml-2">Show online only</span>
+            </label>
+        </div>
+
+        <div class="flex-1">
+            <input
+                type="text"
+                id="search-devices"
+                class="form-input w-full"
+                placeholder="Search by IP, MAC, hostname, or vendor..."
+                onkeyup="filterDevicesTable()"
+            >
+        </div>
+
+        <div>
+            <button onclick="exportData('devices', 'csv')" class="btn-secondary">
+                Export CSV
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Devices Table -->
+<div class="card">
+    <div class="overflow-x-auto">
+        <table class="data-table" id="devices-table">
+            <thead>
+                <tr>
+                    <th onclick="sortTable(0)">IP Address ↕</th>
+                    <th onclick="sortTable(1)">MAC Address ↕</th>
+                    <th onclick="sortTable(2)">Hostname ↕</th>
+                    <th onclick="sortTable(3)">Vendor ↕</th>
+                    <th onclick="sortTable(4)">Open Ports</th>
+                    <th onclick="sortTable(5)">First Seen ↕</th>
+                    <th onclick="sortTable(6)">Last Seen ↕</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="devices-tbody">
+                <tr>
+                    <td colspan="9" class="text-center text-gray-500">Loading devices...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Device Details Modal -->
+<div id="device-modal" class="modal hidden">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 class="text-xl font-bold">Device Details</h3>
+            <button onclick="closeDeviceModal()" class="text-gray-600 hover:text-gray-800">&times;</button>
+        </div>
+        <div class="modal-body" id="device-details">
+            <!-- Populated dynamically -->
+        </div>
+        <div class="modal-footer">
+            <button onclick="closeDeviceModal()" class="btn-secondary">Close</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block page_init %}
+loadDevices();
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let devicesData = [];
+
+async function loadDevices() {
+    try {
+        const onlineOnly = document.getElementById('filter-online').checked;
+        const response = await fetch(`/api/devices?online_only=${onlineOnly}`);
+        const data = await response.json();
+
+        devicesData = data.devices;
+        renderDevicesTable(devicesData);
+
+    } catch (error) {
+        console.error('Error loading devices:', error);
+        showNotification('Failed to load devices', 'error');
+    }
+}
+
+function renderDevicesTable(devices) {
+    const tbody = document.getElementById('devices-tbody');
+    tbody.innerHTML = '';
+
+    if (devices.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-500">No devices found</td></tr>';
+        return;
+    }
+
+    devices.forEach(device => {
+        const row = tbody.insertRow();
+        row.innerHTML = `
+            <td class="font-mono">${device.ip}</td>
+            <td class="font-mono text-sm">${device.mac}</td>
+            <td>${device.hostname || '<span class="text-gray-400">Unknown</span>'}</td>
+            <td>${device.vendor || '<span class="text-gray-400">Unknown</span>'}</td>
+            <td>
+                ${device.open_ports.length > 0
+                    ? `<span class="text-sm">${device.open_ports.slice(0, 3).join(', ')}${device.open_ports.length > 3 ? '...' : ''}</span>`
+                    : '<span class="text-gray-400">None</span>'}
+            </td>
+            <td class="text-sm">${formatDateTime(new Date(device.first_seen))}</td>
+            <td class="text-sm">${formatTimeAgo(new Date(device.last_seen))}</td>
+            <td>
+                <span class="status-badge status-${device.is_online ? 'online' : 'offline'}">
+                    ${device.is_online ? 'Online' : 'Offline'}
+                </span>
+            </td>
+            <td>
+                <button onclick='showDeviceDetails("${device.mac}")' class="text-blue-600 hover:text-blue-800 text-sm">
+                    Details
+                </button>
+            </td>
+        `;
+    });
+}
+
+function filterDevicesTable() {
+    const searchTerm = document.getElementById('search-devices').value.toLowerCase();
+
+    const filtered = devicesData.filter(device => {
+        return device.ip.toLowerCase().includes(searchTerm) ||
+               device.mac.toLowerCase().includes(searchTerm) ||
+               (device.hostname && device.hostname.toLowerCase().includes(searchTerm)) ||
+               (device.vendor && device.vendor.toLowerCase().includes(searchTerm));
+    });
+
+    renderDevicesTable(filtered);
+}
+
+async function showDeviceDetails(mac) {
+    try {
+        const response = await fetch(`/api/devices/${mac}`);
+        const device = await response.json();
+
+        const detailsDiv = document.getElementById('device-details');
+        detailsDiv.innerHTML = `
+            <div class="space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="detail-label">IP Address</label>
+                        <div class="detail-value font-mono">${device.ip}</div>
+                    </div>
+                    <div>
+                        <label class="detail-label">MAC Address</label>
+                        <div class="detail-value font-mono">${device.mac}</div>
+                    </div>
+                    <div>
+                        <label class="detail-label">Hostname</label>
+                        <div class="detail-value">${device.hostname || 'Unknown'}</div>
+                    </div>
+                    <div>
+                        <label class="detail-label">Vendor</label>
+                        <div class="detail-value">${device.vendor || 'Unknown'}</div>
+                    </div>
+                    <div>
+                        <label class="detail-label">First Seen</label>
+                        <div class="detail-value">${formatDateTime(new Date(device.first_seen))}</div>
+                    </div>
+                    <div>
+                        <label class="detail-label">Last Seen</label>
+                        <div class="detail-value">${formatDateTime(new Date(device.last_seen))}</div>
+                    </div>
+                </div>
+
+                ${device.open_ports.length > 0 ? `
+                <div>
+                    <label class="detail-label">Open Ports</label>
+                    <div class="detail-value">
+                        ${device.open_ports.map(port => {
+                            const service = device.services[port] || 'unknown';
+                            return `<span class="port-badge">${port} (${service})</span>`;
+                        }).join(' ')}
+                    </div>
+                </div>
+                ` : ''}
+
+                <div>
+                    <label class="detail-label">Notes</label>
+                    <textarea
+                        id="device-notes"
+                        class="form-textarea w-full"
+                        rows="3"
+                        placeholder="Add notes about this device..."
+                    >${device.notes || ''}</textarea>
+                    <button onclick='saveDeviceNotes("${device.mac}")' class="btn-primary mt-2">
+                        Save Notes
+                    </button>
+                </div>
+            </div>
+        `;
+
+        document.getElementById('device-modal').classList.remove('hidden');
+
+    } catch (error) {
+        console.error('Error loading device details:', error);
+        showNotification('Failed to load device details', 'error');
+    }
+}
+
+function closeDeviceModal() {
+    document.getElementById('device-modal').classList.add('hidden');
+}
+
+async function saveDeviceNotes(mac) {
+    try {
+        const notes = document.getElementById('device-notes').value;
+
+        const response = await fetch(`/api/devices/${mac}/notes`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notes })
+        });
+
+        if (response.ok) {
+            showNotification('Notes saved successfully', 'success');
+        }
+    } catch (error) {
+        console.error('Error saving notes:', error);
+        showNotification('Failed to save notes', 'error');
+    }
+}
+
+let sortDirection = {};
+
+function sortTable(columnIndex) {
+    const direction = sortDirection[columnIndex] === 'asc' ? 'desc' : 'asc';
+    sortDirection[columnIndex] = direction;
+
+    devicesData.sort((a, b) => {
+        let aVal, bVal;
+
+        switch(columnIndex) {
+            case 0: aVal = a.ip; bVal = b.ip; break;
+            case 1: aVal = a.mac; bVal = b.mac; break;
+            case 2: aVal = a.hostname || ''; bVal = b.hostname || ''; break;
+            case 3: aVal = a.vendor || ''; bVal = b.vendor || ''; break;
+            case 5: aVal = new Date(a.first_seen); bVal = new Date(b.first_seen); break;
+            case 6: aVal = new Date(a.last_seen); bVal = new Date(b.last_seen); break;
+            default: return 0;
+        }
+
+        if (aVal < bVal) return direction === 'asc' ? -1 : 1;
+        if (aVal > bVal) return direction === 'asc' ? 1 : -1;
+        return 0;
+    });
+
+    renderDevicesTable(devicesData);
+}
+</script>
+{% endblock %}

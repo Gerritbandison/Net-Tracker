@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ title }}{% endblock %}</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Plotly.js for charts -->
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/style.css">
+
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <!-- Navigation -->
+    <nav class="bg-blue-600 text-white shadow-lg">
+        <div class="container mx-auto px-4">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center">
+                    <h1 class="text-2xl font-bold">NetMonDash</h1>
+                    <span class="ml-4 text-sm text-blue-200">AI-Powered Network Monitor</span>
+                </div>
+
+                <div class="flex space-x-4">
+                    <a href="/" class="nav-link {% if page == 'overview' %}active{% endif %}">
+                        Overview
+                    </a>
+                    <a href="/devices" class="nav-link {% if page == 'devices' %}active{% endif %}">
+                        Devices
+                    </a>
+                    <a href="/wifi" class="nav-link {% if page == 'wifi' %}active{% endif %}">
+                        WiFi
+                    </a>
+                    <a href="/insights" class="nav-link {% if page == 'insights' %}active{% endif %}">
+                        AI Insights
+                    </a>
+                    <a href="/settings" class="nav-link {% if page == 'settings' %}active{% endif %}">
+                        Settings
+                    </a>
+                </div>
+
+                <div class="flex items-center space-x-4">
+                    <div id="connection-status" class="flex items-center">
+                        <div class="h-3 w-3 rounded-full bg-gray-400" id="status-indicator"></div>
+                        <span class="ml-2 text-sm" id="status-text">Connecting...</span>
+                    </div>
+                    <button id="refresh-btn" class="btn-secondary" onclick="refreshData()">
+                        Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="container mx-auto px-4 py-8">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-gray-300 mt-auto py-6">
+        <div class="container mx-auto px-4 text-center">
+            <p>&copy; 2026 NetMonDash - AI-Powered Network Monitoring</p>
+            <p class="text-sm mt-2">Last scan: <span id="last-scan-time">--</span></p>
+        </div>
+    </footer>
+
+    <!-- Global Scripts -->
+    <script src="/static/js/dashboard.js"></script>
+
+    {% block extra_scripts %}{% endblock %}
+
+    <script>
+        // Initialize dashboard on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeDashboard();
+            {% block page_init %}{% endblock %}
+        });
+    </script>
+</body>
+</html>
