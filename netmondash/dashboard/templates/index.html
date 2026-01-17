@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <!-- Statistics Cards -->
+    <div class="stat-card">
+        <div class="stat-label">Total Devices</div>
+        <div class="stat-value" id="total-devices">--</div>
+        <div class="stat-change text-gray-600">All discovered devices</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Online Now</div>
+        <div class="stat-value text-green-600" id="online-devices">--</div>
+        <div class="stat-change" id="online-change">--</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Alerts</div>
+        <div class="stat-value text-yellow-600" id="alert-count">--</div>
+        <div class="stat-change" id="critical-alerts">--</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Scans (24h)</div>
+        <div class="stat-value text-blue-600" id="scan-count">--</div>
+        <div class="stat-change" id="last-scan">Last: --</div>
+    </div>
+</div>
+
+<!-- Main Content Grid -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <!-- Recent Devices -->
+    <div class="card">
+        <h2 class="card-title">Recent Devices</h2>
+        <div class="overflow-x-auto">
+            <table class="data-table" id="recent-devices-table">
+                <thead>
+                    <tr>
+                        <th>IP Address</th>
+                        <th>Hostname</th>
+                        <th>Vendor</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="recent-devices-body">
+                    <tr>
+                        <td colspan="4" class="text-center text-gray-500">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="mt-4">
+            <a href="/devices" class="text-blue-600 hover:text-blue-800">View all devices →</a>
+        </div>
+    </div>
+
+    <!-- Recent Alerts -->
+    <div class="card">
+        <h2 class="card-title">Recent Alerts</h2>
+        <div id="alerts-container" class="space-y-3">
+            <div class="text-center text-gray-500">Loading alerts...</div>
+        </div>
+        <div class="mt-4">
+            <a href="/insights" class="text-blue-600 hover:text-blue-800">View all insights →</a>
+        </div>
+    </div>
+
+    <!-- Network Activity Chart -->
+    <div class="card lg:col-span-2">
+        <h2 class="card-title">Network Activity (24h)</h2>
+        <div id="activity-chart" style="height: 300px;"></div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="mt-6 flex space-x-4">
+    <button onclick="triggerScan()" class="btn-primary">
+        Trigger Network Scan
+    </button>
+    <button onclick="exportData('devices', 'json')" class="btn-secondary">
+        Export Data
+    </button>
+</div>
+{% endblock %}
+
+{% block page_init %}
+loadOverviewData();
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+async function loadOverviewData() {
+    try {
+        // Load statistics
+        const statsResponse = await fetch('/api/stats');
+        const stats = await statsResponse.json();
+
+        document.getElementById('total-devices').textContent = stats.total_devices || 0;
+        document.getElementById('online-devices').textContent = stats.online_devices || 0;
+        document.getElementById('alert-count').textContent = stats.unacknowledged_alerts || 0;
+        document.getElementById('scan-count').textContent = stats.scans_24h || 0;
+
+        if (stats.critical_alerts > 0) {
+            document.getElementById('critical-alerts').textContent = `${stats.critical_alerts} critical`;
+            document.getElementById('critical-alerts').classList.add('text-red-600');
+        }
+
+        if (stats.last_scan) {
+            const lastScan = new Date(stats.last_scan);
+            document.getElementById('last-scan').textContent = `Last: ${formatTimeAgo(lastScan)}`;
+        }
+
+        // Load recent devices
+        const devicesResponse = await fetch('/api/devices?online_only=false');
+        const devicesData = await devicesResponse.json();
+        const devices = devicesData.devices.slice(0, 5); // Top 5
+
+        const tbody = document.getElementById('recent-devices-body');
+        tbody.innerHTML = '';
+
+        devices.forEach(device => {
+            const row = tbody.insertRow();
+            row.innerHTML = `
+                <td>${device.ip}</td>
+                <td>${device.hostname || 'Unknown'}</td>
+                <td>${device.vendor || 'Unknown'}</td>
+                <td>
+                    <span class="status-badge status-${device.is_online ? 'online' : 'offline'}">
+                        ${device.is_online ? 'Online' : 'Offline'}
+                    </span>
+                </td>
+            `;
+        });
+
+        // Load recent alerts
+        const alertsResponse = await fetch('/api/alerts?unacknowledged_only=true');
+        const alertsData = await alertsResponse.json();
+        const alerts = alertsData.alerts.slice(0, 5);
+
+        const alertsContainer = document.getElementById('alerts-container');
+        alertsContainer.innerHTML = '';
+
+        if (alerts.length === 0) {
+            alertsContainer.innerHTML = '<div class="text-center text-gray-500">No unacknowledged alerts</div>';
+        } else {
+            alerts.forEach(alert => {
+                const alertDiv = document.createElement('div');
+                alertDiv.className = `alert alert-${alert.severity}`;
+                alertDiv.innerHTML = `
+                    <div class="font-semibold">${alert.title}</div>
+                    <div class="text-sm">${alert.message.substring(0, 100)}...</div>
+                    <div class="text-xs text-gray-500 mt-1">${formatTimeAgo(new Date(alert.timestamp))}</div>
+                `;
+                alertsContainer.appendChild(alertDiv);
+            });
+        }
+
+        // Load activity chart
+        const scanHistoryResponse = await fetch('/api/scans/history?hours=24');
+        const scanHistory = await scanHistoryResponse.json();
+
+        plotActivityChart(scanHistory.scans);
+
+    } catch (error) {
+        console.error('Error loading overview data:', error);
+    }
+}
+
+function plotActivityChart(scans) {
+    const timestamps = scans.map(s => new Date(s.timestamp));
+    const deviceCounts = scans.map(s => s.device_count);
+
+    const trace = {
+        x: timestamps,
+        y: deviceCounts,
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: 'Devices',
+        line: {
+            color: '#3B82F6',
+            width: 2
+        },
+        marker: {
+            size: 6
+        }
+    };
+
+    const layout = {
+        xaxis: {
+            title: 'Time',
+            type: 'date'
+        },
+        yaxis: {
+            title: 'Device Count',
+            rangemode: 'tozero'
+        },
+        margin: { t: 20, r: 20, b: 40, l: 50 },
+        hovermode: 'closest'
+    };
+
+    Plotly.newPlot('activity-chart', [trace], layout, {responsive: true});
+}
+
+async function triggerScan() {
+    try {
+        const response = await fetch('/api/scan/trigger', { method: 'POST' });
+        const result = await response.json();
+
+        if (result.success) {
+            showNotification('Scan triggered successfully', 'success');
+        }
+    } catch (error) {
+        console.error('Error triggering scan:', error);
+        showNotification('Failed to trigger scan', 'error');
+    }
+}
+</script>
+{% endblock %}

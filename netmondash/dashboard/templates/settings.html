@@ -1,0 +1,316 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mb-6">
+    <h1 class="text-3xl font-bold text-gray-800">Settings</h1>
+    <p class="text-gray-600 mt-2">Configure NetMonDash preferences</p>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <!-- Network Settings -->
+    <div class="card">
+        <h2 class="card-title">Network Settings</h2>
+        <div class="space-y-4">
+            <div>
+                <label class="detail-label">Network Interface</label>
+                <select id="interface-select" class="form-select w-full">
+                    <option>Auto-detect</option>
+                    <option>wlan0</option>
+                    <option>eth0</option>
+                </select>
+                <p class="text-xs text-gray-500 mt-1">Select the network interface to use for scanning</p>
+            </div>
+
+            <div>
+                <label class="detail-label">Scan Interval (seconds)</label>
+                <input type="number" id="scan-interval" class="form-input w-full" value="30" min="10" max="300">
+                <p class="text-xs text-gray-500 mt-1">How often to scan the network automatically</p>
+            </div>
+
+            <div>
+                <label class="inline-flex items-center">
+                    <input type="checkbox" id="service-detection" class="form-checkbox">
+                    <span class="ml-2">Enable service detection (slower scans)</span>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Settings -->
+    <div class="card">
+        <h2 class="card-title">AI Settings</h2>
+        <div class="space-y-4">
+            <div>
+                <label class="inline-flex items-center">
+                    <input type="checkbox" id="enable-ai" class="form-checkbox" checked>
+                    <span class="ml-2">Enable AI analysis</span>
+                </label>
+            </div>
+
+            <div>
+                <label class="detail-label">Ollama API URL</label>
+                <input type="text" id="ollama-url" class="form-input w-full" value="http://localhost:11434">
+                <p class="text-xs text-gray-500 mt-1">Ollama API endpoint</p>
+            </div>
+
+            <div>
+                <label class="detail-label">Model</label>
+                <input type="text" id="ollama-model" class="form-input w-full" value="llama3.1:8b">
+                <p class="text-xs text-gray-500 mt-1">Ollama model to use for analysis</p>
+            </div>
+
+            <div>
+                <button onclick="testOllamaConnection()" class="btn-secondary">
+                    Test Connection
+                </button>
+                <span id="ollama-status" class="ml-3 text-sm"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Settings -->
+    <div class="card">
+        <h2 class="card-title">Notifications</h2>
+        <div class="space-y-3">
+            <label class="inline-flex items-center">
+                <input type="checkbox" id="notify-new-device" class="form-checkbox" checked>
+                <span class="ml-2">Notify on new device detection</span>
+            </label>
+
+            <label class="inline-flex items-center">
+                <input type="checkbox" id="notify-critical" class="form-checkbox" checked>
+                <span class="ml-2">Notify on critical alerts</span>
+            </label>
+
+            <label class="inline-flex items-center">
+                <input type="checkbox" id="notify-wifi" class="form-checkbox">
+                <span class="ml-2">Notify on WiFi signal issues</span>
+            </label>
+
+            <div class="mt-4">
+                <button onclick="testNotification()" class="btn-secondary">
+                    Test Notification
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Display Settings -->
+    <div class="card">
+        <h2 class="card-title">Display Settings</h2>
+        <div class="space-y-4">
+            <div>
+                <label class="detail-label">Auto-refresh interval (seconds)</label>
+                <input type="number" id="refresh-interval" class="form-input w-full" value="30" min="5" max="300">
+                <p class="text-xs text-gray-500 mt-1">Dashboard auto-refresh interval</p>
+            </div>
+
+            <div>
+                <label class="detail-label">Items per page</label>
+                <select id="items-per-page" class="form-select w-full">
+                    <option value="25">25</option>
+                    <option value="50" selected>50</option>
+                    <option value="100">100</option>
+                    <option value="200">200</option>
+                </select>
+            </div>
+
+            <label class="inline-flex items-center">
+                <input type="checkbox" id="dark-mode" class="form-checkbox">
+                <span class="ml-2">Dark mode (coming soon)</span>
+            </label>
+        </div>
+    </div>
+
+    <!-- Advanced Settings -->
+    <div class="card">
+        <h2 class="card-title">Advanced Settings</h2>
+        <div class="space-y-4">
+            <div>
+                <label class="detail-label">Signal strength alert threshold (dBm)</label>
+                <input type="number" id="signal-threshold" class="form-input w-full" value="-70" min="-100" max="-30">
+                <p class="text-xs text-gray-500 mt-1">Alert when WiFi signal drops below this level</p>
+            </div>
+
+            <div>
+                <label class="detail-label">Device offline timeout (seconds)</label>
+                <input type="number" id="offline-timeout" class="form-input w-full" value="300" min="60" max="3600">
+                <p class="text-xs text-gray-500 mt-1">Mark device as offline after this period</p>
+            </div>
+
+            <div>
+                <label class="detail-label">Data retention (days)</label>
+                <input type="number" id="retention-days" class="form-input w-full" value="30" min="1" max="365">
+                <p class="text-xs text-gray-500 mt-1">How long to keep historical data</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- About -->
+    <div class="card">
+        <h2 class="card-title">About NetMonDash</h2>
+        <div class="space-y-3">
+            <div>
+                <label class="detail-label">Version</label>
+                <div class="detail-value">1.0.0</div>
+            </div>
+
+            <div>
+                <label class="detail-label">Python Version</label>
+                <div class="detail-value" id="python-version">--</div>
+            </div>
+
+            <div>
+                <label class="detail-label">Database</label>
+                <div class="detail-value">SQLite</div>
+            </div>
+
+            <div class="mt-4">
+                <a href="https://github.com/yourusername/netmondash" target="_blank" class="text-blue-600 hover:text-blue-800">
+                    View on GitHub →
+                </a>
+            </div>
+
+            <div class="mt-4">
+                <button onclick="exportSettings()" class="btn-secondary">
+                    Export Settings
+                </button>
+                <button onclick="importSettings()" class="btn-secondary ml-2">
+                    Import Settings
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Save Button -->
+<div class="fixed bottom-6 right-6">
+    <button onclick="saveSettings()" class="btn-primary shadow-lg">
+        Save Settings
+    </button>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+async function testOllamaConnection() {
+    const statusSpan = document.getElementById('ollama-status');
+    statusSpan.textContent = 'Testing...';
+    statusSpan.className = 'ml-3 text-sm text-gray-500';
+
+    try {
+        const url = document.getElementById('ollama-url').value;
+        const response = await fetch(`${url}/api/tags`, { timeout: 5000 });
+
+        if (response.ok) {
+            statusSpan.textContent = '✓ Connected';
+            statusSpan.className = 'ml-3 text-sm text-green-600';
+        } else {
+            statusSpan.textContent = '✗ Connection failed';
+            statusSpan.className = 'ml-3 text-sm text-red-600';
+        }
+    } catch (error) {
+        statusSpan.textContent = '✗ Cannot connect';
+        statusSpan.className = 'ml-3 text-sm text-red-600';
+    }
+}
+
+async function testNotification() {
+    showNotification('This is a test notification from NetMonDash', 'info');
+}
+
+function saveSettings() {
+    // Collect all settings
+    const settings = {
+        scan_interval: document.getElementById('scan-interval').value,
+        service_detection: document.getElementById('service-detection').checked,
+        enable_ai: document.getElementById('enable-ai').checked,
+        ollama_url: document.getElementById('ollama-url').value,
+        ollama_model: document.getElementById('ollama-model').value,
+        notify_new_device: document.getElementById('notify-new-device').checked,
+        notify_critical: document.getElementById('notify-critical').checked,
+        notify_wifi: document.getElementById('notify-wifi').checked,
+        refresh_interval: document.getElementById('refresh-interval').value,
+        items_per_page: document.getElementById('items-per-page').value,
+        signal_threshold: document.getElementById('signal-threshold').value,
+        offline_timeout: document.getElementById('offline-timeout').value,
+        retention_days: document.getElementById('retention-days').value,
+    };
+
+    // Save to localStorage
+    localStorage.setItem('netmondash_settings', JSON.stringify(settings));
+
+    showNotification('Settings saved successfully', 'success');
+}
+
+function loadSettings() {
+    const saved = localStorage.getItem('netmondash_settings');
+
+    if (!saved) return;
+
+    try {
+        const settings = JSON.parse(saved);
+
+        if (settings.scan_interval) document.getElementById('scan-interval').value = settings.scan_interval;
+        if (settings.service_detection !== undefined) document.getElementById('service-detection').checked = settings.service_detection;
+        if (settings.enable_ai !== undefined) document.getElementById('enable-ai').checked = settings.enable_ai;
+        if (settings.ollama_url) document.getElementById('ollama-url').value = settings.ollama_url;
+        if (settings.ollama_model) document.getElementById('ollama-model').value = settings.ollama_model;
+        if (settings.notify_new_device !== undefined) document.getElementById('notify-new-device').checked = settings.notify_new_device;
+        if (settings.notify_critical !== undefined) document.getElementById('notify-critical').checked = settings.notify_critical;
+        if (settings.notify_wifi !== undefined) document.getElementById('notify-wifi').checked = settings.notify_wifi;
+        if (settings.refresh_interval) document.getElementById('refresh-interval').value = settings.refresh_interval;
+        if (settings.items_per_page) document.getElementById('items-per-page').value = settings.items_per_page;
+        if (settings.signal_threshold) document.getElementById('signal-threshold').value = settings.signal_threshold;
+        if (settings.offline_timeout) document.getElementById('offline-timeout').value = settings.offline_timeout;
+        if (settings.retention_days) document.getElementById('retention-days').value = settings.retention_days;
+
+    } catch (error) {
+        console.error('Error loading settings:', error);
+    }
+}
+
+function exportSettings() {
+    const settings = localStorage.getItem('netmondash_settings') || '{}';
+    const blob = new Blob([settings], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'netmondash_settings.json';
+    a.click();
+
+    URL.revokeObjectURL(url);
+    showNotification('Settings exported', 'success');
+}
+
+function importSettings() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json';
+
+    input.onchange = (e) => {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+
+        reader.onload = (event) => {
+            try {
+                const settings = JSON.parse(event.target.result);
+                localStorage.setItem('netmondash_settings', JSON.stringify(settings));
+                loadSettings();
+                showNotification('Settings imported successfully', 'success');
+            } catch (error) {
+                showNotification('Invalid settings file', 'error');
+            }
+        };
+
+        reader.readAsText(file);
+    };
+
+    input.click();
+}
+
+// Load settings on page load
+document.addEventListener('DOMContentLoaded', loadSettings);
+</script>
+{% endblock %}

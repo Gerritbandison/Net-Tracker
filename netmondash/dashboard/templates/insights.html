@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mb-6">
+    <h1 class="text-3xl font-bold text-gray-800">AI Insights</h1>
+    <p class="text-gray-600 mt-2">AI-powered security and optimization recommendations</p>
+</div>
+
+<!-- Analysis Triggers -->
+<div class="card mb-6">
+    <h2 class="card-title">Run Analysis</h2>
+    <div class="flex flex-wrap gap-4">
+        <button onclick="runSecurityAnalysis()" class="btn-primary">
+            Security Analysis
+        </button>
+        <button onclick="runHealthAnalysis()" class="btn-primary">
+            Network Health Analysis
+        </button>
+        <button onclick="runAllAnalyses()" class="btn-secondary">
+            Run All Analyses
+        </button>
+    </div>
+    <div id="analysis-status" class="mt-4"></div>
+</div>
+
+<!-- Quick Insights -->
+<div class="card mb-6">
+    <h2 class="card-title">Quick Insights</h2>
+    <div id="quick-insights" class="space-y-2">
+        <div class="text-gray-500">Loading insights...</div>
+    </div>
+</div>
+
+<!-- Recommendations -->
+<div class="grid grid-cols-1 gap-6">
+    <!-- Security Recommendations -->
+    <div class="card">
+        <h2 class="card-title">Security Recommendations</h2>
+        <div id="security-recommendations" class="space-y-4">
+            <div class="text-gray-500">Run security analysis to see recommendations</div>
+        </div>
+    </div>
+
+    <!-- Health Recommendations -->
+    <div class="card">
+        <h2 class="card-title">Network Health Recommendations</h2>
+        <div id="health-recommendations" class="space-y-4">
+            <div class="text-gray-500">Run health analysis to see recommendations</div>
+        </div>
+    </div>
+
+    <!-- WiFi Recommendations -->
+    <div class="card">
+        <h2 class="card-title">WiFi Optimization Recommendations</h2>
+        <div id="wifi-recommendations" class="space-y-4">
+            <div class="text-gray-500">WiFi analysis coming soon...</div>
+        </div>
+    </div>
+</div>
+
+<!-- Alerts -->
+<div class="card mt-6">
+    <h2 class="card-title">Recent Alerts</h2>
+    <div class="flex justify-between items-center mb-4">
+        <label class="inline-flex items-center">
+            <input type="checkbox" id="show-acknowledged" class="form-checkbox" onchange="loadAlerts()">
+            <span class="ml-2">Show acknowledged alerts</span>
+        </label>
+        <button onclick="acknowledgeAllAlerts()" class="btn-secondary">
+            Acknowledge All
+        </button>
+    </div>
+    <div id="alerts-list" class="space-y-3">
+        <div class="text-gray-500">Loading alerts...</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block page_init %}
+loadQuickInsights();
+loadAlerts();
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+async function loadQuickInsights() {
+    try {
+        const response = await fetch('/api/insights');
+        const data = await response.json();
+
+        const container = document.getElementById('quick-insights');
+        container.innerHTML = '';
+
+        if (!data.available) {
+            container.innerHTML = `<div class="text-gray-500">${data.message}</div>`;
+            return;
+        }
+
+        if (data.insights.length === 0) {
+            container.innerHTML = '<div class="text-gray-500">No insights available</div>';
+            return;
+        }
+
+        data.insights.forEach(insight => {
+            const div = document.createElement('div');
+            div.className = 'insight-item';
+            div.innerHTML = `
+                <div class="flex items-start">
+                    <div class="flex-shrink-0 text-blue-500 mr-3">•</div>
+                    <div>${insight}</div>
+                </div>
+            `;
+            container.appendChild(div);
+        });
+
+    } catch (error) {
+        console.error('Error loading insights:', error);
+    }
+}
+
+async function runSecurityAnalysis() {
+    setAnalysisStatus('Running security analysis...', 'info');
+
+    try {
+        const response = await fetch('/api/analyze/security', { method: 'POST' });
+        const data = await response.json();
+
+        displayRecommendations(data.recommendations, 'security-recommendations');
+        setAnalysisStatus(`Security analysis complete: ${data.count} recommendations`, 'success');
+
+    } catch (error) {
+        console.error('Error running security analysis:', error);
+        setAnalysisStatus('Security analysis failed', 'error');
+        showNotification('Failed to run security analysis', 'error');
+    }
+}
+
+async function runHealthAnalysis() {
+    setAnalysisStatus('Running network health analysis...', 'info');
+
+    try {
+        const response = await fetch('/api/analyze/health', { method: 'POST' });
+        const data = await response.json();
+
+        displayRecommendations(data.recommendations, 'health-recommendations');
+        setAnalysisStatus(`Health analysis complete: ${data.count} recommendations`, 'success');
+
+    } catch (error) {
+        console.error('Error running health analysis:', error);
+        setAnalysisStatus('Health analysis failed', 'error');
+        showNotification('Failed to run health analysis', 'error');
+    }
+}
+
+async function runAllAnalyses() {
+    await runSecurityAnalysis();
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    await runHealthAnalysis();
+}
+
+function displayRecommendations(recommendations, containerId) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+
+    if (recommendations.length === 0) {
+        container.innerHTML = '<div class="text-green-600">✓ No issues found</div>';
+        return;
+    }
+
+    recommendations.forEach(rec => {
+        const div = document.createElement('div');
+        div.className = `recommendation-card severity-${rec.severity}`;
+
+        div.innerHTML = `
+            <div class="flex items-start justify-between">
+                <div class="flex-1">
+                    <div class="flex items-center mb-2">
+                        <span class="severity-badge severity-${rec.severity}">
+                            ${rec.severity.toUpperCase()}
+                        </span>
+                        <span class="ml-2 text-xs text-gray-500">${rec.category}</span>
+                    </div>
+                    <div class="font-semibold mb-1">${rec.description}</div>
+                    <div class="text-sm text-gray-700">${rec.recommendation}</div>
+
+                    ${rec.command ? `
+                    <div class="mt-3 p-3 bg-gray-800 rounded text-sm">
+                        <div class="flex items-center justify-between">
+                            <code class="text-green-400">${rec.command}</code>
+                            <button
+                                onclick='copyToClipboard("${rec.command.replace(/'/g, "\\'")}")'
+                                class="text-blue-400 hover:text-blue-300 text-xs ml-2"
+                            >
+                                Copy
+                            </button>
+                        </div>
+                    </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+
+        container.appendChild(div);
+    });
+}
+
+async function loadAlerts() {
+    try {
+        const showAcknowledged = document.getElementById('show-acknowledged').checked;
+        const url = showAcknowledged ? '/api/alerts' : '/api/alerts?unacknowledged_only=true';
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        const container = document.getElementById('alerts-list');
+        container.innerHTML = '';
+
+        if (data.count === 0) {
+            container.innerHTML = '<div class="text-gray-500">No alerts</div>';
+            return;
+        }
+
+        data.alerts.forEach(alert => {
+            const div = document.createElement('div');
+            div.className = `alert alert-${alert.severity} ${alert.acknowledged ? 'opacity-60' : ''}`;
+
+            div.innerHTML = `
+                <div class="flex items-start justify-between">
+                    <div class="flex-1">
+                        <div class="flex items-center mb-2">
+                            <span class="severity-badge severity-${alert.severity}">
+                                ${alert.severity.toUpperCase()}
+                            </span>
+                            <span class="ml-2 text-xs text-gray-500">${alert.category || 'general'}</span>
+                            ${alert.acknowledged ? '<span class="ml-2 text-xs text-gray-500">✓ Acknowledged</span>' : ''}
+                        </div>
+                        <div class="font-semibold">${alert.title}</div>
+                        <div class="text-sm mt-1">${alert.message}</div>
+                        ${alert.source_ip ? `<div class="text-xs text-gray-500 mt-1">Source: ${alert.source_ip}</div>` : ''}
+                        <div class="text-xs text-gray-500 mt-1">${formatTimeAgo(new Date(alert.timestamp))}</div>
+                    </div>
+                    ${!alert.acknowledged ? `
+                    <button
+                        onclick="acknowledgeAlert(${alert.id})"
+                        class="btn-secondary text-xs ml-4"
+                    >
+                        Acknowledge
+                    </button>
+                    ` : ''}
+                </div>
+            `;
+
+            container.appendChild(div);
+        });
+
+    } catch (error) {
+        console.error('Error loading alerts:', error);
+    }
+}
+
+async function acknowledgeAlert(alertId) {
+    try {
+        const response = await fetch(`/api/alerts/${alertId}/acknowledge`, { method: 'POST' });
+
+        if (response.ok) {
+            showNotification('Alert acknowledged', 'success');
+            loadAlerts();
+        }
+    } catch (error) {
+        console.error('Error acknowledging alert:', error);
+        showNotification('Failed to acknowledge alert', 'error');
+    }
+}
+
+async function acknowledgeAllAlerts() {
+    try {
+        const response = await fetch('/api/alerts?unacknowledged_only=true');
+        const data = await response.json();
+
+        for (const alert of data.alerts) {
+            await acknowledgeAlert(alert.id);
+        }
+
+        showNotification('All alerts acknowledged', 'success');
+        loadAlerts();
+    } catch (error) {
+        console.error('Error acknowledging all alerts:', error);
+        showNotification('Failed to acknowledge alerts', 'error');
+    }
+}
+
+function setAnalysisStatus(message, type) {
+    const statusDiv = document.getElementById('analysis-status');
+    statusDiv.className = `alert alert-${type}`;
+    statusDiv.textContent = message;
+}
+
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        showNotification('Command copied to clipboard', 'success');
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+        showNotification('Failed to copy command', 'error');
+    });
+}
+</script>
+{% endblock %}

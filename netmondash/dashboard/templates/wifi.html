@@ -1,0 +1,307 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="mb-6">
+    <h1 class="text-3xl font-bold text-gray-800">WiFi Analysis</h1>
+    <p class="text-gray-600 mt-2">Monitor WiFi signal strength and network performance</p>
+</div>
+
+<!-- WiFi Metrics Cards -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <div class="stat-card">
+        <div class="stat-label">SSID</div>
+        <div class="stat-value text-lg" id="wifi-ssid">--</div>
+        <div class="stat-change text-gray-600" id="wifi-frequency">--</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Signal Strength</div>
+        <div class="stat-value" id="wifi-signal">--</div>
+        <div class="stat-change" id="wifi-quality">--</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Bit Rate</div>
+        <div class="stat-value text-lg" id="wifi-bitrate">--</div>
+        <div class="stat-change text-gray-600">Current throughput</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Link Quality</div>
+        <div class="stat-value text-lg" id="wifi-link-quality">--</div>
+        <div class="stat-change text-gray-600" id="wifi-channel">--</div>
+    </div>
+</div>
+
+<!-- Charts -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+    <!-- Signal Strength Over Time -->
+    <div class="card">
+        <h2 class="card-title">Signal Strength History</h2>
+        <div id="signal-chart" style="height: 300px;"></div>
+    </div>
+
+    <!-- Available Networks -->
+    <div class="card">
+        <h2 class="card-title">Available WiFi Networks</h2>
+        <div class="flex justify-between items-center mb-4">
+            <button onclick="scanWiFiNetworks()" class="btn-primary">
+                Scan Networks
+            </button>
+            <span id="scan-status" class="text-sm text-gray-500"></span>
+        </div>
+        <div id="networks-container" class="space-y-2 max-h-96 overflow-y-auto">
+            <div class="text-center text-gray-500">Click "Scan Networks" to discover available networks</div>
+        </div>
+    </div>
+</div>
+
+<!-- Band Analysis -->
+<div class="card">
+    <h2 class="card-title">WiFi Band Analysis</h2>
+    <p class="text-gray-600 mb-4">WiFi 7 tri-band support (2.4GHz, 5GHz, 6GHz)</p>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="band-card">
+            <h3 class="font-semibold text-lg mb-2">2.4 GHz</h3>
+            <div class="text-sm text-gray-600 mb-3">
+                <div>Range: Excellent</div>
+                <div>Speed: Basic (up to 600 Mbps)</div>
+                <div>Interference: High</div>
+            </div>
+            <div id="band-24ghz-networks" class="text-sm">
+                <span class="text-gray-500">No scan data</span>
+            </div>
+        </div>
+
+        <div class="band-card">
+            <h3 class="font-semibold text-lg mb-2">5 GHz</h3>
+            <div class="text-sm text-gray-600 mb-3">
+                <div>Range: Good</div>
+                <div>Speed: Fast (up to 4.8 Gbps)</div>
+                <div>Interference: Medium</div>
+            </div>
+            <div id="band-5ghz-networks" class="text-sm">
+                <span class="text-gray-500">No scan data</span>
+            </div>
+        </div>
+
+        <div class="band-card">
+            <h3 class="font-semibold text-lg mb-2">6 GHz</h3>
+            <div class="text-sm text-gray-600 mb-3">
+                <div>Range: Limited</div>
+                <div>Speed: Ultra-fast (up to 5.8 Gbps)</div>
+                <div>Interference: Low</div>
+            </div>
+            <div id="band-6ghz-networks" class="text-sm">
+                <span class="text-gray-500">No scan data</span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block page_init %}
+loadWiFiMetrics();
+setInterval(loadWiFiMetrics, 5000); // Update every 5 seconds
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let signalHistory = [];
+
+async function loadWiFiMetrics() {
+    try {
+        const response = await fetch('/api/wifi/metrics');
+        const data = await response.json();
+
+        if (!data.available) {
+            document.getElementById('wifi-ssid').textContent = 'N/A';
+            document.getElementById('wifi-signal').textContent = 'N/A';
+            document.getElementById('wifi-bitrate').textContent = 'N/A';
+            document.getElementById('wifi-link-quality').textContent = 'N/A';
+            return;
+        }
+
+        const metrics = data.metrics;
+
+        document.getElementById('wifi-ssid').textContent = metrics.ssid || 'Unknown';
+        document.getElementById('wifi-frequency').textContent = metrics.frequency || '--';
+
+        // Signal strength with color coding
+        const signal = metrics.signal_strength;
+        const signalElement = document.getElementById('wifi-signal');
+
+        if (signal !== null) {
+            signalElement.textContent = `${signal} dBm`;
+
+            // Color based on quality
+            signalElement.className = 'stat-value';
+            if (signal >= -50) {
+                signalElement.classList.add('text-green-600');
+            } else if (signal >= -70) {
+                signalElement.classList.add('text-yellow-600');
+            } else {
+                signalElement.classList.add('text-red-600');
+            }
+
+            document.getElementById('wifi-quality').textContent = metrics.signal_quality;
+
+            // Add to history
+            signalHistory.push({
+                timestamp: new Date(),
+                signal: signal
+            });
+
+            // Keep last 50 measurements
+            if (signalHistory.length > 50) {
+                signalHistory.shift();
+            }
+
+            plotSignalHistory();
+        } else {
+            signalElement.textContent = '--';
+        }
+
+        document.getElementById('wifi-bitrate').textContent = metrics.bit_rate || '--';
+        document.getElementById('wifi-link-quality').textContent = metrics.link_quality || '--';
+        document.getElementById('wifi-channel').textContent = metrics.channel ? `Channel ${metrics.channel}` : '--';
+
+    } catch (error) {
+        console.error('Error loading WiFi metrics:', error);
+    }
+}
+
+function plotSignalHistory() {
+    if (signalHistory.length === 0) return;
+
+    const timestamps = signalHistory.map(h => h.timestamp);
+    const signals = signalHistory.map(h => h.signal);
+
+    const trace = {
+        x: timestamps,
+        y: signals,
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: 'Signal (dBm)',
+        line: {
+            color: '#10B981',
+            width: 2
+        },
+        marker: {
+            size: 4
+        }
+    };
+
+    const layout = {
+        xaxis: {
+            title: 'Time',
+            type: 'date'
+        },
+        yaxis: {
+            title: 'Signal Strength (dBm)',
+            range: [-90, -30]
+        },
+        shapes: [
+            // Excellent threshold
+            {
+                type: 'line',
+                x0: timestamps[0],
+                x1: timestamps[timestamps.length - 1],
+                y0: -50,
+                y1: -50,
+                line: { color: 'green', width: 1, dash: 'dash' }
+            },
+            // Fair threshold
+            {
+                type: 'line',
+                x0: timestamps[0],
+                x1: timestamps[timestamps.length - 1],
+                y0: -70,
+                y1: -70,
+                line: { color: 'orange', width: 1, dash: 'dash' }
+            }
+        ],
+        margin: { t: 20, r: 20, b: 40, l: 50 },
+        hovermode: 'closest'
+    };
+
+    Plotly.newPlot('signal-chart', [trace], layout, {responsive: true});
+}
+
+async function scanWiFiNetworks() {
+    try {
+        document.getElementById('scan-status').textContent = 'Scanning...';
+
+        const response = await fetch('/api/wifi/networks');
+        const data = await response.json();
+
+        const container = document.getElementById('networks-container');
+        container.innerHTML = '';
+
+        if (data.count === 0) {
+            container.innerHTML = '<div class="text-center text-gray-500">No networks found</div>';
+            document.getElementById('scan-status').textContent = 'No networks found';
+            return;
+        }
+
+        // Sort by signal strength
+        const networks = data.networks.sort((a, b) => (b.signal || -100) - (a.signal || -100));
+
+        // Group by band
+        const bands = {
+            '2.4GHz': [],
+            '5GHz': [],
+            '6GHz': []
+        };
+
+        networks.forEach(network => {
+            const div = document.createElement('div');
+            div.className = 'network-item';
+
+            const freq = network.frequency || 0;
+            const signal = network.signal || 0;
+            let band = '?';
+
+            if (freq >= 2400 && freq <= 2500) band = '2.4GHz';
+            else if (freq >= 5000 && freq <= 6000) band = '5GHz';
+            else if (freq >= 5925 && freq <= 7125) band = '6GHz';
+
+            bands[band].push(network);
+
+            div.innerHTML = `
+                <div class="flex justify-between items-center">
+                    <div>
+                        <div class="font-semibold">${network.ssid || 'Hidden Network'}</div>
+                        <div class="text-xs text-gray-500">
+                            ${network.bssid} • Channel ${network.channel || '?'} • ${band}
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <div class="font-semibold ${signal >= -60 ? 'text-green-600' : signal >= -75 ? 'text-yellow-600' : 'text-red-600'}">
+                            ${signal.toFixed(0)} dBm
+                        </div>
+                        <div class="text-xs text-gray-500">
+                            ${freq} MHz
+                        </div>
+                    </div>
+                </div>
+            `;
+            container.appendChild(div);
+        });
+
+        // Update band analysis
+        document.getElementById('band-24ghz-networks').textContent = `${bands['2.4GHz'].length} networks`;
+        document.getElementById('band-5ghz-networks').textContent = `${bands['5GHz'].length} networks`;
+        document.getElementById('band-6ghz-networks').textContent = `${bands['6GHz'].length} networks`;
+
+        document.getElementById('scan-status').textContent = `Found ${data.count} networks`;
+
+    } catch (error) {
+        console.error('Error scanning WiFi networks:', error);
+        document.getElementById('scan-status').textContent = 'Scan failed';
+        showNotification('Failed to scan WiFi networks', 'error');
+    }
+}
+</script>
+{% endblock %}
