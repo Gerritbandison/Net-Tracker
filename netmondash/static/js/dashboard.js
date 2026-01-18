@@ -9,6 +9,29 @@ let ws = null;
 let reconnectTimeout = null;
 let isConnected = false;
 
+const ALERT_TYPES = new Set(['info', 'success', 'warning', 'error']);
+const SEVERITY_LEVELS = new Set(['critical', 'warning', 'info']);
+
+function escapeHtml(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function normalizeSeverity(value, fallback = 'info') {
+    const normalized = String(value || '').toLowerCase();
+    return SEVERITY_LEVELS.has(normalized) ? normalized : fallback;
+}
+
+function normalizeNotificationType(value, fallback = 'info') {
+    const normalized = String(value || '').toLowerCase();
+    return ALERT_TYPES.has(normalized) ? normalized : fallback;
+}
+
 /**
  * Initialize dashboard on page load
  */
@@ -322,19 +345,28 @@ function getTimestamp() {
  * Show notification
  */
 function showNotification(message, type = 'info') {
-    // Create notification element
-    const notification = document.createElement('div');
-    notification.className = `alert alert-${type} fixed top-4 right-4 z-50 shadow-lg max-w-md fade-in`;
-    notification.innerHTML = `
-        <div class="flex items-center justify-between">
-            <span>${message}</span>
-            <button onclick="this.parentElement.parentElement.remove()" class="ml-4 text-lg">&times;</button>
-        </div>
-    `;
+    const notificationType = normalizeNotificationType(type);
 
+    const notification = document.createElement('div');
+    notification.className = `alert alert-${notificationType} fixed top-4 right-4 z-50 shadow-lg max-w-md fade-in`;
+
+    const container = document.createElement('div');
+    container.className = 'flex items-center justify-between';
+
+    const text = document.createElement('span');
+    text.textContent = message;
+
+    const button = document.createElement('button');
+    button.className = 'ml-4 text-lg';
+    button.setAttribute('type', 'button');
+    button.textContent = '×';
+    button.addEventListener('click', () => notification.remove());
+
+    container.appendChild(text);
+    container.appendChild(button);
+    notification.appendChild(container);
     document.body.appendChild(notification);
 
-    // Auto-remove after 5 seconds
     setTimeout(() => {
         if (notification.parentElement) {
             notification.classList.add('opacity-0');

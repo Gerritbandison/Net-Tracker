@@ -120,11 +120,14 @@ async function loadOverviewData() {
         tbody.innerHTML = '';
 
         devices.forEach(device => {
+            const safeIp = escapeHtml(device.ip || '');
+            const safeHostname = device.hostname ? escapeHtml(device.hostname) : 'Unknown';
+            const safeVendor = device.vendor ? escapeHtml(device.vendor) : 'Unknown';
             const row = tbody.insertRow();
             row.innerHTML = `
-                <td>${device.ip}</td>
-                <td>${device.hostname || 'Unknown'}</td>
-                <td>${device.vendor || 'Unknown'}</td>
+                <td>${safeIp}</td>
+                <td>${safeHostname}</td>
+                <td>${safeVendor}</td>
                 <td>
                     <span class="status-badge status-${device.is_online ? 'online' : 'offline'}">
                         ${device.is_online ? 'Online' : 'Offline'}
@@ -145,11 +148,14 @@ async function loadOverviewData() {
             alertsContainer.innerHTML = '<div class="text-center text-gray-500">No unacknowledged alerts</div>';
         } else {
             alerts.forEach(alert => {
+                const alertSeverity = normalizeSeverity(alert.severity);
+                const alertTitle = escapeHtml(alert.title || 'Alert');
+                const messagePreview = escapeHtml((alert.message || '').substring(0, 100));
                 const alertDiv = document.createElement('div');
-                alertDiv.className = `alert alert-${alert.severity}`;
+                alertDiv.className = `alert alert-${alertSeverity}`;
                 alertDiv.innerHTML = `
-                    <div class="font-semibold">${alert.title}</div>
-                    <div class="text-sm">${alert.message.substring(0, 100)}...</div>
+                    <div class="font-semibold">${alertTitle}</div>
+                    <div class="text-sm">${messagePreview}...</div>
                     <div class="text-xs text-gray-500 mt-1">${formatTimeAgo(new Date(alert.timestamp))}</div>
                 `;
                 alertsContainer.appendChild(alertDiv);
