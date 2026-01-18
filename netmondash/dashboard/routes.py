@@ -4,6 +4,7 @@ API Routes
 FastAPI routes for NetMonDash dashboard.
 """
 
+import asyncio
 import logging
 import csv
 import json
@@ -201,17 +202,26 @@ async def get_scan_history(
 @router.post("/api/scan/trigger")
 async def trigger_scan(request: Request):
     """Trigger a manual network scan."""
-    scanner = request.app.state.scanner
+    scan_executor = getattr(request.app.state, "scan_executor", None)
+    scan_lock = getattr(request.app.state, "scan_lock", None)
 
-    if not scanner:
-        raise HTTPException(status_code=503, detail="Scanner not available")
+    if not scan_executor:
+        raise HTTPException(status_code=503, detail="Scan trigger not available")
+
+    if scan_lock and scan_lock.locked():
+        return JSONResponse(
+            status_code=409,
+            content={
+                "success": False,
+                "message": "Scan already in progress",
+            },
+        )
 
     try:
-        # This would trigger a scan in the background
-        # In practice, this would notify the scan loop to run immediately
+        asyncio.create_task(scan_executor(source="manual", wait=True))
         return {
             "success": True,
-            "message": "Scan triggered",
+            "message": "Scan scheduled",
         }
     except Exception as e:
         logger.error(f"Error triggering scan: {e}")
