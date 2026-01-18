@@ -13,10 +13,35 @@ from typing import Optional, List
 
 from fastapi import APIRouter, Request, HTTPException, Query, Response
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
+
+from config import MAX_DEVICE_NOTES_LENGTH, MAX_EXPORT_RECORDS
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class DeviceNotesUpdate(BaseModel):
+    """Request body for device notes updates."""
+    notes: str = Field("", max_length=MAX_DEVICE_NOTES_LENGTH)
+
+
+def _sanitize_csv_value(value: str) -> str:
+    stripped = value.lstrip()
+    if stripped.startswith(("=", "+", "-", "@")):
+        return f"'{value}"
+    return value
+
+
+def _serialize_csv_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return _sanitize_csv_value(json.dumps(value, ensure_ascii=True))
+    if isinstance(value, str):
+        return _sanitize_csv_value(value)
+    return _sanitize_csv_value(str(value))
 
 
 # HTML Page Routes
@@ -123,7 +148,7 @@ async def get_device(request: Request, mac: str):
 
 
 @router.post("/api/devices/{mac}/notes")
-async def update_device_notes(request: Request, mac: str):
+async def update_device_notes(request: Request, mac: str, payload: DeviceNotesUpdate):
     """Update device notes."""
     db = request.app.state.db_manager
 
@@ -131,21 +156,15 @@ async def update_device_notes(request: Request, mac: str):
         raise HTTPException(status_code=503, detail="Database not available")
 
     try:
-        body = await request.json()
-        notes = body.get("notes", "")
+        if len(mac) > 64:
+            raise HTTPException(status_code=400, detail="Invalid MAC address")
 
-        device = db.get_device(mac)
-        if not device:
+        notes = payload.notes.strip()
+        success = db.update_device_notes(mac, notes if notes else None)
+        if not success:
             raise HTTPException(status_code=404, detail="Device not found")
 
-        # Update notes in database
-        session = db.get_session()
-        try:
-            device.notes = notes
-            session.commit()
-            return {"success": True, "mac": mac}
-        finally:
-            session.close()
+        return {"success": True, "mac": mac}
 
     except HTTPException:
         raise
@@ -428,13 +447,18 @@ async def export_data(
             items = db.get_all_devices()
             data = [device.to_dict() for device in items]
         elif data_type == "scans":
-            items = db.get_recent_scans(limit=100)
+            items = db.get_recent_scans(limit=MAX_EXPORT_RECORDS)
             data = [scan.to_dict() for scan in items]
         elif data_type == "alerts":
-            items = db.get_recent_alerts(limit=100)
+            items = db.get_recent_alerts(limit=MAX_EXPORT_RECORDS)
             data = [alert.to_dict() for alert in items]
         else:
             raise HTTPException(status_code=400, detail="Invalid data type")
+
+        truncated = False
+        if len(data) > MAX_EXPORT_RECORDS:
+            data = data[:MAX_EXPORT_RECORDS]
+            truncated = True
 
         # Export as JSON
         if format == "json":
@@ -443,6 +467,7 @@ async def export_data(
                     "data_type": data_type,
                     "count": len(data),
                     "exported_at": datetime.now().isoformat(),
+                    "truncated": truncated,
                     "data": data,
                 }
             )
@@ -456,7 +481,11 @@ async def export_data(
             output = io.StringIO()
             writer = csv.DictWriter(output, fieldnames=data[0].keys())
             writer.writeheader()
-            writer.writerows(data)
+            sanitized_rows = [
+                {key: _serialize_csv_value(value) for key, value in row.items()}
+                for row in data
+            ]
+            writer.writerows(sanitized_rows)
 
             # Return as streaming response
             return StreamingResponse(

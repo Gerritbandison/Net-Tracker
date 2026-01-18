@@ -256,6 +256,8 @@ async function scanWiFiNetworks() {
         };
 
         networks.forEach(network => {
+            const safeSsid = network.ssid ? escapeHtml(network.ssid) : 'Hidden Network';
+            const safeBssid = network.bssid ? escapeHtml(network.bssid) : 'Unknown';
             const div = document.createElement('div');
             div.className = 'network-item';
 
@@ -272,9 +274,9 @@ async function scanWiFiNetworks() {
             div.innerHTML = `
                 <div class="flex justify-between items-center">
                     <div>
-                        <div class="font-semibold">${network.ssid || 'Hidden Network'}</div>
+                        <div class="font-semibold">${safeSsid}</div>
                         <div class="text-xs text-gray-500">
-                            ${network.bssid} • Channel ${network.channel || '?'} • ${band}
+                            ${safeBssid} • Channel ${network.channel || '?'} • ${band}
                         </div>
                     </div>
                     <div class="text-right">

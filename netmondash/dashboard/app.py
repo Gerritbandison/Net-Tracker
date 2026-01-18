@@ -14,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from config import STATIC_DIR, TEMPLATES_DIR
+from config import STATIC_DIR, TEMPLATES_DIR, ALLOWED_ORIGINS, ALLOW_CREDENTIALS, SECURITY_HEADERS
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +46,19 @@ def create_app(
     # Add CORS middleware
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=ALLOWED_ORIGINS,
+        allow_credentials=ALLOW_CREDENTIALS,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Content-Type"],
     )
+
+    # Add basic security headers
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):
+        response = await call_next(request)
+        for header, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(header, value)
+        return response
 
     # Mount static files
     if STATIC_DIR.exists():

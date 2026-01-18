@@ -92,7 +92,7 @@ async function loadQuickInsights() {
         container.innerHTML = '';
 
         if (!data.available) {
-            container.innerHTML = `<div class="text-gray-500">${data.message}</div>`;
+            container.innerHTML = `<div class="text-gray-500">${escapeHtml(data.message || '')}</div>`;
             return;
         }
 
@@ -102,12 +102,13 @@ async function loadQuickInsights() {
         }
 
         data.insights.forEach(insight => {
+            const safeInsight = escapeHtml(insight);
             const div = document.createElement('div');
             div.className = 'insight-item';
             div.innerHTML = `
                 <div class="flex items-start">
                     <div class="flex-shrink-0 text-blue-500 mr-3">•</div>
-                    <div>${insight}</div>
+                    <div>${safeInsight}</div>
                 </div>
             `;
             container.appendChild(div);
@@ -168,28 +169,34 @@ function displayRecommendations(recommendations, containerId) {
     }
 
     recommendations.forEach(rec => {
+        const severity = normalizeSeverity(rec.severity);
+        const category = escapeHtml(rec.category || 'general');
+        const description = escapeHtml(rec.description || '');
+        const recommendation = escapeHtml(rec.recommendation || '');
+        const command = rec.command ? escapeHtml(rec.command) : '';
+
         const div = document.createElement('div');
-        div.className = `recommendation-card severity-${rec.severity}`;
+        div.className = `recommendation-card severity-${severity}`;
 
         div.innerHTML = `
             <div class="flex items-start justify-between">
                 <div class="flex-1">
                     <div class="flex items-center mb-2">
-                        <span class="severity-badge severity-${rec.severity}">
-                            ${rec.severity.toUpperCase()}
+                        <span class="severity-badge severity-${severity}">
+                            ${severity.toUpperCase()}
                         </span>
-                        <span class="ml-2 text-xs text-gray-500">${rec.category}</span>
+                        <span class="ml-2 text-xs text-gray-500">${category}</span>
                     </div>
-                    <div class="font-semibold mb-1">${rec.description}</div>
-                    <div class="text-sm text-gray-700">${rec.recommendation}</div>
+                    <div class="font-semibold mb-1">${description}</div>
+                    <div class="text-sm text-gray-700">${recommendation}</div>
 
-                    ${rec.command ? `
+                    ${command ? `
                     <div class="mt-3 p-3 bg-gray-800 rounded text-sm">
                         <div class="flex items-center justify-between">
-                            <code class="text-green-400">${rec.command}</code>
+                            <code class="text-green-400">${command}</code>
                             <button
-                                onclick='copyToClipboard("${rec.command.replace(/'/g, "\\'")}")'
-                                class="text-blue-400 hover:text-blue-300 text-xs ml-2"
+                                data-command="${command}"
+                                class="copy-command-btn text-blue-400 hover:text-blue-300 text-xs ml-2"
                             >
                                 Copy
                             </button>
@@ -199,6 +206,13 @@ function displayRecommendations(recommendations, containerId) {
                 </div>
             </div>
         `;
+
+        const copyButton = div.querySelector('.copy-command-btn');
+        if (copyButton) {
+            copyButton.addEventListener('click', () => {
+                copyToClipboard(copyButton.dataset.command || '');
+            });
+        }
 
         container.appendChild(div);
     });
@@ -221,22 +235,27 @@ async function loadAlerts() {
         }
 
         data.alerts.forEach(alert => {
+            const severity = normalizeSeverity(alert.severity);
+            const title = escapeHtml(alert.title || 'Alert');
+            const message = escapeHtml(alert.message || '');
+            const category = escapeHtml(alert.category || 'general');
+            const sourceIp = alert.source_ip ? escapeHtml(alert.source_ip) : '';
             const div = document.createElement('div');
-            div.className = `alert alert-${alert.severity} ${alert.acknowledged ? 'opacity-60' : ''}`;
+            div.className = `alert alert-${severity} ${alert.acknowledged ? 'opacity-60' : ''}`;
 
             div.innerHTML = `
                 <div class="flex items-start justify-between">
                     <div class="flex-1">
                         <div class="flex items-center mb-2">
-                            <span class="severity-badge severity-${alert.severity}">
-                                ${alert.severity.toUpperCase()}
+                            <span class="severity-badge severity-${severity}">
+                                ${severity.toUpperCase()}
                             </span>
-                            <span class="ml-2 text-xs text-gray-500">${alert.category || 'general'}</span>
+                            <span class="ml-2 text-xs text-gray-500">${category}</span>
                             ${alert.acknowledged ? '<span class="ml-2 text-xs text-gray-500">✓ Acknowledged</span>' : ''}
                         </div>
-                        <div class="font-semibold">${alert.title}</div>
-                        <div class="text-sm mt-1">${alert.message}</div>
-                        ${alert.source_ip ? `<div class="text-xs text-gray-500 mt-1">Source: ${alert.source_ip}</div>` : ''}
+                        <div class="font-semibold">${title}</div>
+                        <div class="text-sm mt-1">${message}</div>
+                        ${sourceIp ? `<div class="text-xs text-gray-500 mt-1">Source: ${sourceIp}</div>` : ''}
                         <div class="text-xs text-gray-500 mt-1">${formatTimeAgo(new Date(alert.timestamp))}</div>
                     </div>
                     ${!alert.acknowledged ? `

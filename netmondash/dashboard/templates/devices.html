@@ -78,6 +78,7 @@
 {% endblock %}
 
 {% block page_init %}
+setupDeviceTableEvents();
 loadDevices();
 {% endblock %}
 
@@ -110,15 +111,21 @@ function renderDevicesTable(devices) {
     }
 
     devices.forEach(device => {
+        const safeIp = escapeHtml(device.ip || '');
+        const safeMac = escapeHtml(device.mac || '');
+        const safeHostname = device.hostname ? escapeHtml(device.hostname) : '';
+        const safeVendor = device.vendor ? escapeHtml(device.vendor) : '';
+        const openPorts = Array.isArray(device.open_ports) ? device.open_ports : [];
+
         const row = tbody.insertRow();
         row.innerHTML = `
-            <td class="font-mono">${device.ip}</td>
-            <td class="font-mono text-sm">${device.mac}</td>
-            <td>${device.hostname || '<span class="text-gray-400">Unknown</span>'}</td>
-            <td>${device.vendor || '<span class="text-gray-400">Unknown</span>'}</td>
+            <td class="font-mono">${safeIp}</td>
+            <td class="font-mono text-sm">${safeMac}</td>
+            <td>${safeHostname || '<span class="text-gray-400">Unknown</span>'}</td>
+            <td>${safeVendor || '<span class="text-gray-400">Unknown</span>'}</td>
             <td>
-                ${device.open_ports.length > 0
-                    ? `<span class="text-sm">${device.open_ports.slice(0, 3).join(', ')}${device.open_ports.length > 3 ? '...' : ''}</span>`
+                ${openPorts.length > 0
+                    ? `<span class="text-sm">${openPorts.slice(0, 3).map(port => escapeHtml(String(port))).join(', ')}${openPorts.length > 3 ? '...' : ''}</span>`
                     : '<span class="text-gray-400">None</span>'}
             </td>
             <td class="text-sm">${formatDateTime(new Date(device.first_seen))}</td>
@@ -129,7 +136,7 @@ function renderDevicesTable(devices) {
                 </span>
             </td>
             <td>
-                <button onclick='showDeviceDetails("${device.mac}")' class="text-blue-600 hover:text-blue-800 text-sm">
+                <button data-mac="${safeMac}" class="device-details-btn text-blue-600 hover:text-blue-800 text-sm">
                     Details
                 </button>
             </td>
@@ -152,28 +159,36 @@ function filterDevicesTable() {
 
 async function showDeviceDetails(mac) {
     try {
-        const response = await fetch(`/api/devices/${mac}`);
+        const response = await fetch(`/api/devices/${encodeURIComponent(mac)}`);
         const device = await response.json();
 
         const detailsDiv = document.getElementById('device-details');
+        const safeIp = escapeHtml(device.ip || '');
+        const safeMac = escapeHtml(device.mac || '');
+        const safeHostname = device.hostname ? escapeHtml(device.hostname) : 'Unknown';
+        const safeVendor = device.vendor ? escapeHtml(device.vendor) : 'Unknown';
+        const safeNotes = device.notes ? escapeHtml(device.notes) : '';
+        const openPorts = Array.isArray(device.open_ports) ? device.open_ports : [];
+        const services = device.services || {};
+
         detailsDiv.innerHTML = `
             <div class="space-y-4">
                 <div class="grid grid-cols-2 gap-4">
                     <div>
                         <label class="detail-label">IP Address</label>
-                        <div class="detail-value font-mono">${device.ip}</div>
+                        <div class="detail-value font-mono">${safeIp}</div>
                     </div>
                     <div>
                         <label class="detail-label">MAC Address</label>
-                        <div class="detail-value font-mono">${device.mac}</div>
+                        <div class="detail-value font-mono">${safeMac}</div>
                     </div>
                     <div>
                         <label class="detail-label">Hostname</label>
-                        <div class="detail-value">${device.hostname || 'Unknown'}</div>
+                        <div class="detail-value">${safeHostname}</div>
                     </div>
                     <div>
                         <label class="detail-label">Vendor</label>
-                        <div class="detail-value">${device.vendor || 'Unknown'}</div>
+                        <div class="detail-value">${safeVendor}</div>
                     </div>
                     <div>
                         <label class="detail-label">First Seen</label>
@@ -185,13 +200,14 @@ async function showDeviceDetails(mac) {
                     </div>
                 </div>
 
-                ${device.open_ports.length > 0 ? `
+                ${openPorts.length > 0 ? `
                 <div>
                     <label class="detail-label">Open Ports</label>
                     <div class="detail-value">
-                        ${device.open_ports.map(port => {
-                            const service = device.services[port] || 'unknown';
-                            return `<span class="port-badge">${port} (${service})</span>`;
+                        ${openPorts.map(port => {
+                            const service = services[port] || 'unknown';
+                            const safeService = escapeHtml(String(service));
+                            return `<span class="port-badge">${escapeHtml(String(port))} (${safeService})</span>`;
                         }).join(' ')}
                     </div>
                 </div>
@@ -203,9 +219,10 @@ async function showDeviceDetails(mac) {
                         id="device-notes"
                         class="form-textarea w-full"
                         rows="3"
+                        maxlength="2000"
                         placeholder="Add notes about this device..."
-                    >${device.notes || ''}</textarea>
-                    <button onclick='saveDeviceNotes("${device.mac}")' class="btn-primary mt-2">
+                    >${safeNotes}</textarea>
+                    <button id="save-device-notes" data-mac="${safeMac}" class="btn-primary mt-2">
                         Save Notes
                     </button>
                 </div>
@@ -213,6 +230,12 @@ async function showDeviceDetails(mac) {
         `;
 
         document.getElementById('device-modal').classList.remove('hidden');
+        const saveButton = document.getElementById('save-device-notes');
+        if (saveButton) {
+            saveButton.addEventListener('click', () => {
+                saveDeviceNotes(saveButton.dataset.mac || '');
+            });
+        }
 
     } catch (error) {
         console.error('Error loading device details:', error);
@@ -228,7 +251,7 @@ async function saveDeviceNotes(mac) {
     try {
         const notes = document.getElementById('device-notes').value;
 
-        const response = await fetch(`/api/devices/${mac}/notes`, {
+        const response = await fetch(`/api/devices/${encodeURIComponent(mac)}/notes`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ notes })
@@ -241,6 +264,19 @@ async function saveDeviceNotes(mac) {
         console.error('Error saving notes:', error);
         showNotification('Failed to save notes', 'error');
     }
+}
+
+function setupDeviceTableEvents() {
+    const table = document.getElementById('devices-table');
+    if (!table || table.dataset.bound === 'true') return;
+
+    table.dataset.bound = 'true';
+    table.addEventListener('click', event => {
+        const button = event.target.closest('.device-details-btn');
+        if (button && button.dataset.mac) {
+            showDeviceDetails(button.dataset.mac);
+        }
+    });
 }
 
 let sortDirection = {};

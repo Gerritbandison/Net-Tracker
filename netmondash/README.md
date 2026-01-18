@@ -232,7 +232,7 @@ INFO - Supported bands: 2.4GHz, 5GHz, 6GHz
 INFO - Database initialized
 INFO - Scanner initialized (interval: 30s)
 INFO - AI analyzer initialized
-INFO - Starting web server on 0.0.0.0:5000
+INFO - Starting web server on 127.0.0.1:5000
 INFO - Dashboard URL: http://localhost:5000
 ```
 
@@ -244,7 +244,10 @@ Create a `.env` file in the project root:
 
 ```bash
 # Web Server
+NETMONDASH_HOST=127.0.0.1
 NETMONDASH_PORT=5000
+NETMONDASH_ALLOWED_ORIGINS=http://localhost:5000,http://127.0.0.1:5000
+NETMONDASH_ALLOW_CREDENTIALS=false
 
 # Scanning
 NETMONDASH_SCAN_INTERVAL=30
@@ -257,6 +260,9 @@ OLLAMA_MODEL=llama3.1:8b
 # Logging
 NETMONDASH_DEBUG=false
 ```
+
+To expose the dashboard on your LAN, set `NETMONDASH_HOST=0.0.0.0` and update
+`NETMONDASH_ALLOWED_ORIGINS` to the exact origin(s) you will access from.
 
 ### Configuration File
 
