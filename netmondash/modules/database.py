@@ -227,6 +227,32 @@ class DatabaseManager:
         finally:
             session.close()
 
+    def update_device_notes(self, mac: str, notes: Optional[str]) -> bool:
+        """
+        Update device notes.
+
+        Args:
+            mac: MAC address
+            notes: Notes content (None clears notes)
+
+        Returns:
+            True if device was updated
+        """
+        session = self.get_session()
+        try:
+            device = session.query(Device).filter(Device.mac == mac).first()
+            if not device:
+                return False
+            device.notes = notes if notes else None
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error updating device notes for {mac}: {e}")
+            raise
+        finally:
+            session.close()
+
     def get_all_devices(self, online_only: bool = False) -> List[Device]:
         """
         Get all devices.

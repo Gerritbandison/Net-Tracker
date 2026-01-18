@@ -18,7 +18,7 @@ import uvicorn
 
 from config import (
     DEFAULT_WEB_PORT,
-    DEFAULT_HOST,
+    WEB_HOST,
     DEFAULT_SCAN_INTERVAL,
     LOG_FILE,
     LOG_FORMAT,
@@ -300,7 +300,7 @@ class NetMonDash:
 
     def run(self) -> None:
         """Run the application."""
-        logger.info(f"Starting web server on {DEFAULT_HOST}:{self.port}")
+        logger.info(f"Starting web server on {WEB_HOST}:{self.port}")
         logger.info(f"Dashboard URL: http://localhost:{self.port}")
 
         # Setup signal handlers
@@ -321,7 +321,7 @@ class NetMonDash:
         try:
             uvicorn.run(
                 self.app,
-                host=DEFAULT_HOST,
+                host=WEB_HOST,
                 port=self.port,
                 log_level="info",
                 access_log=True,

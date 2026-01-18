@@ -25,7 +25,7 @@ DB_ECHO = False  # Set to True for SQL query debugging
 
 # Web Server Configuration
 DEFAULT_WEB_PORT = 5000
-DEFAULT_HOST = "0.0.0.0"
+DEFAULT_HOST = "127.0.0.1"
 WEBSOCKET_HEARTBEAT_INTERVAL = 30  # seconds
 
 # Network Scanning Configuration
@@ -146,6 +146,15 @@ LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 REQUIRE_SUDO_CONFIRMATION = True
 ALLOWED_SUDO_COMMANDS = ["nmap", "iw", "nmcli", "iwconfig"]
 MAX_COMMAND_LENGTH = 500
+MAX_DEVICE_NOTES_LENGTH = 2000
+
+# HTTP Security Headers
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "same-origin",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+}
 
 # Export Configuration
 EXPORT_FORMATS = ["json", "csv"]
@@ -177,8 +186,33 @@ def get_env_bool(key: str, default: bool) -> bool:
     value = os.getenv(key, str(default)).lower()
     return value in ("true", "1", "yes", "on")
 
+def get_env_str(key: str, default: str) -> str:
+    """Get string from environment variable with fallback to default."""
+    value = os.getenv(key)
+    return value.strip() if value else default
+
+def get_env_list(key: str, default: List[str]) -> List[str]:
+    """Get list from comma-separated environment variable."""
+    value = os.getenv(key)
+    if not value:
+        return list(default)
+    return [item.strip() for item in value.split(",") if item.strip()]
+
 # Apply environment overrides
+WEB_HOST = get_env_str("NETMONDASH_HOST", DEFAULT_HOST)
 WEB_PORT = get_env_int("NETMONDASH_PORT", DEFAULT_WEB_PORT)
 SCAN_INTERVAL = get_env_int("NETMONDASH_SCAN_INTERVAL", DEFAULT_SCAN_INTERVAL)
 ENABLE_AI = get_env_bool("NETMONDASH_ENABLE_AI", True)
 DEBUG_MODE = get_env_bool("NETMONDASH_DEBUG", False)
+ALLOW_CREDENTIALS = get_env_bool("NETMONDASH_ALLOW_CREDENTIALS", False)
+ALLOWED_ORIGINS = get_env_list(
+    "NETMONDASH_ALLOWED_ORIGINS",
+    [
+        f"http://localhost:{WEB_PORT}",
+        f"http://127.0.0.1:{WEB_PORT}",
+        f"http://[::1]:{WEB_PORT}",
+        f"https://localhost:{WEB_PORT}",
+        f"https://127.0.0.1:{WEB_PORT}",
+        f"https://[::1]:{WEB_PORT}",
+    ],
+)

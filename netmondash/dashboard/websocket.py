@@ -13,6 +13,8 @@ from datetime import datetime
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 
+from config import ALLOWED_ORIGINS
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -66,6 +68,14 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+def _is_origin_allowed(origin: str | None) -> bool:
+    if not origin:
+        return False
+    normalized_origin = origin.rstrip("/")
+    allowed = {allowed_origin.rstrip("/") for allowed_origin in ALLOWED_ORIGINS}
+    return "*" in allowed or normalized_origin in allowed
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
@@ -82,6 +92,12 @@ async def websocket_endpoint(websocket: WebSocket):
     - {"type": "alert", "data": {...}} - New alert
     - {"type": "stats", "data": {...}} - Updated statistics
     """
+    origin = websocket.headers.get("origin")
+    if not _is_origin_allowed(origin):
+        logger.warning("Rejected WebSocket connection from disallowed origin")
+        await websocket.close(code=1008)
+        return
+
     await manager.connect(websocket)
 
     try:
