@@ -11,6 +11,7 @@ import logging
 import signal
 import sys
 import time
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -111,6 +112,7 @@ class NetMonDash:
         self.enable_ai = enable_ai
         self.running = False
         self.scan_task = None
+        self.scan_lock = threading.Lock()
 
         # Setup logging
         setup_logging(verbose)
@@ -183,8 +185,123 @@ class NetMonDash:
             ai_analyzer=self.ai_analyzer,
             notifier=self.notifier,
         )
+        self.app.state.scan_executor = self.execute_scan
+        self.app.state.scan_lock = self.scan_lock
 
         logger.info("Application initialized successfully")
+
+    def _run_scan_sync(
+        self,
+        source: str,
+        wait: bool,
+        service_detection: bool,
+    ) -> dict:
+        acquired = self.scan_lock.acquire(blocking=wait)
+        if not acquired:
+            logger.info("Scan request skipped; scan already in progress")
+            return {"status": "in_progress", "source": source}
+
+        try:
+            logger.info("Performing network scan...")
+            scan_start = time.time()
+
+            devices = self.scanner.scan_network(service_detection=service_detection)
+            scan_duration = time.time() - scan_start
+
+            logger.info(f"Scan complete: {len(devices)} devices found in {scan_duration:.2f}s")
+
+            existing_macs = set()
+            new_devices = []
+
+            for device in devices:
+                if not device.mac:
+                    continue
+
+                existing = self.db.get_device(device.mac)
+
+                if not existing:
+                    new_devices.append(device)
+                    logger.info(f"New device detected: {device.ip} ({device.mac})")
+
+                    if self.notifier:
+                        self.notifier.notify_new_device(
+                            device.ip,
+                            device.mac,
+                            device.hostname
+                        )
+
+                self.db.add_or_update_device(
+                    mac=device.mac,
+                    ip=device.ip,
+                    hostname=device.hostname,
+                    vendor=device.vendor,
+                    open_ports=device.open_ports,
+                    services=device.services,
+                )
+
+                existing_macs.add(device.mac)
+
+            self.db.mark_devices_offline(list(existing_macs))
+
+            scan_summary = self.scanner.get_scan_summary()
+            scan_record = self.db.add_scan(
+                interface=self.interface.name,
+                device_count=len(devices),
+                scan_type='network',
+                duration_seconds=scan_duration,
+                raw_data=scan_summary,
+            )
+
+            if self.ai_analyzer and (new_devices or len(devices) > 0):
+                logger.info("Performing AI analysis...")
+                try:
+                    insights = self.ai_analyzer.get_quick_insights(scan_summary)
+                    for insight in insights:
+                        logger.info(f"AI Insight: {insight}")
+                except Exception as e:
+                    logger.error(f"AI analysis failed: {e}")
+
+            return {
+                "status": "completed",
+                "scan_id": scan_record.id,
+                "device_count": len(devices),
+                "new_devices": len(new_devices),
+                "duration": scan_duration,
+                "source": source,
+            }
+
+        except Exception as e:
+            logger.error(f"Error running scan: {e}", exc_info=True)
+            return {"status": "error", "message": str(e), "source": source}
+
+        finally:
+            self.scan_lock.release()
+
+    async def execute_scan(
+        self,
+        source: str = "scheduled",
+        wait: bool = True,
+        service_detection: bool = False,
+    ) -> dict:
+        result = await asyncio.to_thread(
+            self._run_scan_sync,
+            source,
+            wait,
+            service_detection,
+        )
+
+        if result.get("status") != "completed":
+            return result
+
+        await broadcast_scan_update({
+            "scan_id": result["scan_id"],
+            "device_count": result["device_count"],
+            "new_devices": result["new_devices"],
+            "duration": result["duration"],
+            "source": result["source"],
+        })
+
+        return result
 
     async def scan_loop(self) -> None:
         """Background task for periodic network scanning."""
@@ -192,84 +309,10 @@ class NetMonDash:
 
         while self.running:
             try:
-                logger.info("Performing network scan...")
-                scan_start = time.time()
+                result = await self.execute_scan(source="scheduled", wait=True)
+                if result.get("status") != "completed":
+                    logger.warning(f"Scheduled scan did not complete: {result.get('status')}")
 
-                # Perform scan
-                devices = self.scanner.scan_network(service_detection=False)
-                scan_duration = time.time() - scan_start
-
-                logger.info(f"Scan complete: {len(devices)} devices found in {scan_duration:.2f}s")
-
-                # Track new devices
-                existing_macs = set()
-                new_devices = []
-
-                for device in devices:
-                    if not device.mac:
-                        continue
-
-                    # Check if device exists
-                    existing = self.db.get_device(device.mac)
-
-                    if not existing:
-                        new_devices.append(device)
-                        logger.info(f"New device detected: {device.ip} ({device.mac})")
-
-                        # Send notification
-                        self.notifier.notify_new_device(
-                            device.ip,
-                            device.mac,
-                            device.hostname
-                        )
-
-                    # Update database
-                    self.db.add_or_update_device(
-                        mac=device.mac,
-                        ip=device.ip,
-                        hostname=device.hostname,
-                        vendor=device.vendor,
-                        open_ports=device.open_ports,
-                        services=device.services,
-                    )
-
-                    existing_macs.add(device.mac)
-
-                # Mark offline devices
-                self.db.mark_devices_offline(list(existing_macs))
-
-                # Record scan
-                scan_record = self.db.add_scan(
-                    interface=self.interface.name,
-                    device_count=len(devices),
-                    scan_type='network',
-                    duration_seconds=scan_duration,
-                    raw_data=self.scanner.get_scan_summary(),
-                )
-
-                # Broadcast update via WebSocket
-                await broadcast_scan_update({
-                    'scan_id': scan_record.id,
-                    'device_count': len(devices),
-                    'new_devices': len(new_devices),
-                    'duration': scan_duration,
-                })
-
-                # Perform AI analysis if enabled and new devices found
-                if self.ai_analyzer and (new_devices or len(devices) > 0):
-                    logger.info("Performing AI analysis...")
-                    try:
-                        scan_data = self.scanner.get_scan_summary()
-                        insights = self.ai_analyzer.get_quick_insights(scan_data)
-
-                        # Log insights
-                        for insight in insights:
-                            logger.info(f"AI Insight: {insight}")
-
-                    except Exception as e:
-                        logger.error(f"AI analysis failed: {e}")
-
-                # Wait for next scan
                 logger.debug(f"Waiting {self.scan_interval}s until next scan...")
                 await asyncio.sleep(self.scan_interval)
 

@@ -207,9 +207,12 @@ async function triggerScan() {
         const response = await fetch('/api/scan/trigger', { method: 'POST' });
         const result = await response.json();
 
-        if (result.success) {
-            showNotification('Scan triggered successfully', 'success');
+        if (response.ok && result.success) {
+            showNotification(result.message || 'Scan scheduled', 'success');
+            return;
         }
+
+        showNotification(result.message || 'Failed to trigger scan', 'error');
     } catch (error) {
         console.error('Error triggering scan:', error);
         showNotification('Failed to trigger scan', 'error');
