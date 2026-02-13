@@ -1,20 +1,22 @@
 """
 FastAPI Application
 
-Main web application for NetMonDash.
+Main web application for NetMonDash with enhanced middleware,
+error handling, and lifecycle management.
 """
 
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from config import STATIC_DIR, TEMPLATES_DIR
+from config import STATIC_DIR, TEMPLATES_DIR, APP_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,7 @@ def create_app(
     scanner=None,
     ai_analyzer=None,
     notifier=None,
+    lifespan=None,
 ) -> FastAPI:
     """
     Create and configure FastAPI application.
@@ -33,6 +36,7 @@ def create_app(
         scanner: Network scanner instance
         ai_analyzer: AI analyzer instance
         notifier: Notification manager instance
+        lifespan: Optional lifespan context manager for startup/shutdown
 
     Returns:
         Configured FastAPI app
@@ -40,7 +44,8 @@ def create_app(
     app = FastAPI(
         title="NetMonDash",
         description="AI-Powered Network Device Monitor Dashboard",
-        version="1.0.0",
+        version=APP_VERSION,
+        lifespan=lifespan,
     )
 
     # Add CORS middleware
@@ -51,6 +56,24 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Request timing middleware
+    @app.middleware("http")
+    async def add_timing_header(request: Request, call_next):
+        start = time.monotonic()
+        response = await call_next(request)
+        duration = time.monotonic() - start
+        response.headers["X-Response-Time"] = f"{duration:.4f}s"
+        return response
+
+    # Global exception handler
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception):
+        logger.error(f"Unhandled exception on {request.url}: {exc}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Internal server error", "detail": str(exc)},
+        )
 
     # Mount static files
     if STATIC_DIR.exists():
@@ -76,7 +99,7 @@ def create_app(
     app.include_router(api_router)
     app.include_router(ws_router)
 
-    # Root page - redirect to overview
+    # Root page
     @app.get("/", response_class=HTMLResponse)
     async def root(request: Request):
         """Root page - overview dashboard."""
@@ -86,6 +109,7 @@ def create_app(
                 "request": request,
                 "page": "overview",
                 "title": "NetMonDash - Overview",
+                "version": APP_VERSION,
             }
         )
 
@@ -93,19 +117,33 @@ def create_app(
     @app.get("/health")
     async def health_check():
         """Health check endpoint."""
+        db_ok = db_manager is not None
+        scanner_ok = scanner is not None
+        ai_ok = ai_analyzer is not None
+
+        db_info = None
+        if db_ok:
+            try:
+                db_info = db_manager.get_database_info()
+            except Exception:
+                db_info = {"error": "Failed to query database"}
+
         return {
-            "status": "healthy",
-            "database": db_manager is not None,
-            "scanner": scanner is not None,
-            "ai": ai_analyzer is not None,
+            "status": "healthy" if (db_ok and scanner_ok) else "degraded",
+            "version": APP_VERSION,
+            "components": {
+                "database": {"available": db_ok, "info": db_info},
+                "scanner": {"available": scanner_ok},
+                "ai_analyzer": {"available": ai_ok},
+                "notifier": {"available": notifier is not None},
+            },
         }
 
-    logger.info("FastAPI application created successfully")
+    logger.info(f"FastAPI application v{APP_VERSION} created successfully")
     return app
 
 
 if __name__ == "__main__":
-    # For development testing
     import uvicorn
 
     app = create_app()

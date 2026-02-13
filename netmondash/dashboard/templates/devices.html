@@ -2,8 +2,24 @@
 
 {% block content %}
 <div class="mb-6">
-    <h1 class="text-3xl font-bold text-gray-800">Network Devices</h1>
-    <p class="text-gray-600 mt-2">Monitor all devices on your network</p>
+    <h1 class="text-3xl font-bold text-gray-800 dark:text-gray-100">Network Devices</h1>
+    <p class="text-gray-600 dark:text-gray-400 mt-2">Monitor all devices on your network</p>
+</div>
+
+<!-- Device Count Summary -->
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+    <div class="stat-card text-center">
+        <div class="stat-label">Total</div>
+        <div class="stat-value text-2xl" id="device-count-total">--</div>
+    </div>
+    <div class="stat-card text-center">
+        <div class="stat-label">Online</div>
+        <div class="stat-value text-2xl text-green-600" id="device-count-online">--</div>
+    </div>
+    <div class="stat-card text-center">
+        <div class="stat-label">Offline</div>
+        <div class="stat-value text-2xl text-red-600" id="device-count-offline">--</div>
+    </div>
 </div>
 
 <!-- Filters -->
@@ -11,9 +27,25 @@
     <div class="flex flex-wrap gap-4 items-center">
         <div>
             <label class="inline-flex items-center">
-                <input type="checkbox" id="filter-online" class="form-checkbox" checked onchange="loadDevices()">
-                <span class="ml-2">Show online only</span>
+                <input type="checkbox" id="filter-online" class="form-checkbox" onchange="loadDevices()">
+                <span class="ml-2 dark:text-gray-300">Show online only</span>
             </label>
+        </div>
+
+        <!-- Category Filter -->
+        <div>
+            <select id="filter-category" class="form-select" onchange="filterDevicesTable()">
+                <option value="">All Categories</option>
+                <option value="computer">Computer</option>
+                <option value="phone">Phone</option>
+                <option value="tablet">Tablet</option>
+                <option value="iot">IoT</option>
+                <option value="router">Router</option>
+                <option value="printer">Printer</option>
+                <option value="media">Media</option>
+                <option value="other">Other</option>
+                <option value="unknown">Unknown</option>
+            </select>
         </div>
 
         <div class="flex-1">
@@ -26,11 +58,32 @@
             >
         </div>
 
-        <div>
+        <div class="flex gap-2">
             <button onclick="exportData('devices', 'csv')" class="btn-secondary">
                 Export CSV
             </button>
         </div>
+    </div>
+</div>
+
+<!-- Bulk Actions Bar -->
+<div id="bulk-actions-bar" class="card mb-4 hidden">
+    <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+            <span class="text-sm font-medium dark:text-gray-300"><span id="bulk-selected-count">0</span> devices selected</span>
+            <button onclick="bulkAction('trusted')" class="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700 transition-colors">
+                Mark Trusted
+            </button>
+            <button onclick="bulkAction('blocked')" class="px-3 py-1.5 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition-colors">
+                Mark Blocked
+            </button>
+            <button onclick="bulkAction('unset')" class="px-3 py-1.5 bg-gray-500 text-white rounded text-sm hover:bg-gray-600 transition-colors">
+                Clear Status
+            </button>
+        </div>
+        <button onclick="clearBulkSelection()" class="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+            Clear Selection
+        </button>
     </div>
 </div>
 
@@ -40,20 +93,25 @@
         <table class="data-table" id="devices-table">
             <thead>
                 <tr>
-                    <th onclick="sortTable(0)">IP Address ↕</th>
-                    <th onclick="sortTable(1)">MAC Address ↕</th>
-                    <th onclick="sortTable(2)">Hostname ↕</th>
-                    <th onclick="sortTable(3)">Vendor ↕</th>
+                    <th class="w-10">
+                        <input type="checkbox" id="select-all-devices" class="form-checkbox" onchange="toggleSelectAll(this)">
+                    </th>
+                    <th onclick="sortTable(0)">IP Address &#8693;</th>
+                    <th onclick="sortTable(1)">MAC Address &#8693;</th>
+                    <th onclick="sortTable(2)">Hostname &#8693;</th>
+                    <th onclick="sortTable(3)">Vendor &#8693;</th>
+                    <th>Category</th>
                     <th onclick="sortTable(4)">Open Ports</th>
-                    <th onclick="sortTable(5)">First Seen ↕</th>
-                    <th onclick="sortTable(6)">Last Seen ↕</th>
+                    <th>Latency</th>
+                    <th onclick="sortTable(5)">First Seen &#8693;</th>
+                    <th onclick="sortTable(6)">Last Seen &#8693;</th>
                     <th>Status</th>
                     <th>Actions</th>
                 </tr>
             </thead>
             <tbody id="devices-tbody">
                 <tr>
-                    <td colspan="9" class="text-center text-gray-500">Loading devices...</td>
+                    <td colspan="12" class="text-center text-gray-500">Loading devices...</td>
                 </tr>
             </tbody>
         </table>
@@ -62,14 +120,23 @@
 
 <!-- Device Details Modal -->
 <div id="device-modal" class="modal hidden">
-    <div class="modal-content">
+    <div class="modal-content" style="max-width: 700px;">
         <div class="modal-header">
-            <h3 class="text-xl font-bold">Device Details</h3>
-            <button onclick="closeDeviceModal()" class="text-gray-600 hover:text-gray-800">&times;</button>
+            <h3 class="text-xl font-bold dark:text-gray-100">Device Details</h3>
+            <button onclick="closeDeviceModal()" class="text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 text-2xl">&times;</button>
         </div>
         <div class="modal-body" id="device-details">
             <!-- Populated dynamically -->
         </div>
+
+        <!-- Device Event History -->
+        <div class="px-6 pb-4">
+            <h4 class="font-semibold text-gray-700 dark:text-gray-300 mb-2 mt-4">Event History</h4>
+            <div id="device-events" class="space-y-2 max-h-48 overflow-y-auto">
+                <div class="text-sm text-gray-500">Loading events...</div>
+            </div>
+        </div>
+
         <div class="modal-footer">
             <button onclick="closeDeviceModal()" class="btn-secondary">Close</button>
         </div>
@@ -84,6 +151,7 @@ loadDevices();
 {% block extra_scripts %}
 <script>
 let devicesData = [];
+let selectedDevices = new Set();
 
 async function loadDevices() {
     try {
@@ -92,6 +160,17 @@ async function loadDevices() {
         const data = await response.json();
 
         devicesData = data.devices;
+
+        // Update device counts
+        const allResponse = await fetch('/api/devices?online_only=false');
+        const allData = await allResponse.json();
+        const allDevices = allData.devices;
+        const onlineCount = allDevices.filter(d => d.is_online).length;
+
+        document.getElementById('device-count-total').textContent = allDevices.length;
+        document.getElementById('device-count-online').textContent = onlineCount;
+        document.getElementById('device-count-offline').textContent = allDevices.length - onlineCount;
+
         renderDevicesTable(devicesData);
 
     } catch (error) {
@@ -100,26 +179,55 @@ async function loadDevices() {
     }
 }
 
+function getCategoryBadge(category) {
+    const catColors = {
+        'computer': 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300',
+        'phone': 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300',
+        'tablet': 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300',
+        'iot': 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300',
+        'router': 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300',
+        'printer': 'bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-300',
+        'media': 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300',
+        'other': 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300',
+        'unknown': 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400',
+    };
+    const cat = (category || 'unknown').toLowerCase();
+    const colorClass = catColors[cat] || catColors['unknown'];
+    return `<span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium ${colorClass}">${category || 'Unknown'}</span>`;
+}
+
 function renderDevicesTable(devices) {
     const tbody = document.getElementById('devices-tbody');
     tbody.innerHTML = '';
 
     if (devices.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-gray-500">No devices found</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="12" class="text-center text-gray-500">No devices found</td></tr>';
         return;
     }
 
     devices.forEach(device => {
         const row = tbody.insertRow();
+        const isSelected = selectedDevices.has(device.mac);
+        row.className = isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : '';
         row.innerHTML = `
+            <td>
+                <input type="checkbox" class="form-checkbox device-select" data-mac="${device.mac}"
+                    ${isSelected ? 'checked' : ''} onchange="toggleDeviceSelect('${device.mac}', this.checked)">
+            </td>
             <td class="font-mono">${device.ip}</td>
             <td class="font-mono text-sm">${device.mac}</td>
             <td>${device.hostname || '<span class="text-gray-400">Unknown</span>'}</td>
             <td>${device.vendor || '<span class="text-gray-400">Unknown</span>'}</td>
+            <td>${getCategoryBadge(device.category)}</td>
             <td>
-                ${device.open_ports.length > 0
+                ${device.open_ports && device.open_ports.length > 0
                     ? `<span class="text-sm">${device.open_ports.slice(0, 3).join(', ')}${device.open_ports.length > 3 ? '...' : ''}</span>`
                     : '<span class="text-gray-400">None</span>'}
+            </td>
+            <td class="text-sm">
+                ${device.latency !== undefined && device.latency !== null
+                    ? `<span class="${device.latency < 10 ? 'text-green-600' : device.latency < 50 ? 'text-yellow-600' : 'text-red-600'}">${device.latency.toFixed(1)} ms</span>`
+                    : '<span class="text-gray-400">--</span>'}
             </td>
             <td class="text-sm">${formatDateTime(new Date(device.first_seen))}</td>
             <td class="text-sm">${formatTimeAgo(new Date(device.last_seen))}</td>
@@ -139,21 +247,102 @@ function renderDevicesTable(devices) {
 
 function filterDevicesTable() {
     const searchTerm = document.getElementById('search-devices').value.toLowerCase();
+    const categoryFilter = document.getElementById('filter-category').value.toLowerCase();
 
     const filtered = devicesData.filter(device => {
-        return device.ip.toLowerCase().includes(searchTerm) ||
-               device.mac.toLowerCase().includes(searchTerm) ||
-               (device.hostname && device.hostname.toLowerCase().includes(searchTerm)) ||
-               (device.vendor && device.vendor.toLowerCase().includes(searchTerm));
+        const matchesSearch = !searchTerm ||
+            device.ip.toLowerCase().includes(searchTerm) ||
+            device.mac.toLowerCase().includes(searchTerm) ||
+            (device.hostname && device.hostname.toLowerCase().includes(searchTerm)) ||
+            (device.vendor && device.vendor.toLowerCase().includes(searchTerm));
+
+        const matchesCategory = !categoryFilter ||
+            (device.category && device.category.toLowerCase() === categoryFilter) ||
+            (!device.category && categoryFilter === 'unknown');
+
+        return matchesSearch && matchesCategory;
     });
 
     renderDevicesTable(filtered);
+}
+
+// Bulk selection
+function toggleDeviceSelect(mac, checked) {
+    if (checked) {
+        selectedDevices.add(mac);
+    } else {
+        selectedDevices.delete(mac);
+    }
+    updateBulkActionsBar();
+}
+
+function toggleSelectAll(checkbox) {
+    const checkboxes = document.querySelectorAll('.device-select');
+    checkboxes.forEach(cb => {
+        cb.checked = checkbox.checked;
+        const mac = cb.dataset.mac;
+        if (checkbox.checked) {
+            selectedDevices.add(mac);
+        } else {
+            selectedDevices.delete(mac);
+        }
+    });
+    updateBulkActionsBar();
+}
+
+function clearBulkSelection() {
+    selectedDevices.clear();
+    document.querySelectorAll('.device-select').forEach(cb => cb.checked = false);
+    document.getElementById('select-all-devices').checked = false;
+    updateBulkActionsBar();
+}
+
+function updateBulkActionsBar() {
+    const bar = document.getElementById('bulk-actions-bar');
+    const count = selectedDevices.size;
+    document.getElementById('bulk-selected-count').textContent = count;
+    if (count > 0) {
+        bar.classList.remove('hidden');
+    } else {
+        bar.classList.add('hidden');
+    }
+}
+
+async function bulkAction(action) {
+    if (selectedDevices.size === 0) return;
+
+    const macs = Array.from(selectedDevices);
+    let successCount = 0;
+
+    for (const mac of macs) {
+        try {
+            const response = await fetch(`/api/devices/${mac}/trust`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: action })
+            });
+            if (response.ok) successCount++;
+        } catch (e) {
+            console.error(`Failed to update ${mac}:`, e);
+        }
+    }
+
+    showNotification(`Updated ${successCount} of ${macs.length} devices to "${action}"`, 'success');
+    clearBulkSelection();
+    loadDevices();
 }
 
 async function showDeviceDetails(mac) {
     try {
         const response = await fetch(`/api/devices/${mac}`);
         const device = await response.json();
+
+        const trustStatus = device.trust_status || 'unset';
+        const trustBtnClass = {
+            'trusted': 'bg-green-600 text-white',
+            'blocked': 'bg-red-600 text-white',
+            'unset': 'bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-300'
+        };
 
         const detailsDiv = document.getElementById('device-details');
         detailsDiv.innerHTML = `
@@ -176,6 +365,14 @@ async function showDeviceDetails(mac) {
                         <div class="detail-value">${device.vendor || 'Unknown'}</div>
                     </div>
                     <div>
+                        <label class="detail-label">Category</label>
+                        <div class="detail-value">${getCategoryBadge(device.category)}</div>
+                    </div>
+                    <div>
+                        <label class="detail-label">Latency</label>
+                        <div class="detail-value">${device.latency !== undefined && device.latency !== null ? device.latency.toFixed(1) + ' ms' : 'N/A'}</div>
+                    </div>
+                    <div>
                         <label class="detail-label">First Seen</label>
                         <div class="detail-value">${formatDateTime(new Date(device.first_seen))}</div>
                     </div>
@@ -185,18 +382,45 @@ async function showDeviceDetails(mac) {
                     </div>
                 </div>
 
-                ${device.open_ports.length > 0 ? `
+                ${device.open_ports && device.open_ports.length > 0 ? `
                 <div>
                     <label class="detail-label">Open Ports</label>
                     <div class="detail-value">
                         ${device.open_ports.map(port => {
-                            const service = device.services[port] || 'unknown';
+                            const service = device.services ? (device.services[port] || 'unknown') : 'unknown';
                             return `<span class="port-badge">${port} (${service})</span>`;
                         }).join(' ')}
                     </div>
                 </div>
                 ` : ''}
 
+                <!-- Trust/Block Controls -->
+                <div>
+                    <label class="detail-label">Device Trust Status</label>
+                    <div class="flex space-x-2 mt-1">
+                        <button onclick='setDeviceTrust("${device.mac}", "trusted")' class="px-4 py-2 rounded text-sm font-medium transition-colors ${trustStatus === 'trusted' ? 'bg-green-600 text-white ring-2 ring-green-400' : 'bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-300 hover:bg-green-100 dark:hover:bg-green-900'}">
+                            Trusted
+                        </button>
+                        <button onclick='setDeviceTrust("${device.mac}", "blocked")' class="px-4 py-2 rounded text-sm font-medium transition-colors ${trustStatus === 'blocked' ? 'bg-red-600 text-white ring-2 ring-red-400' : 'bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-300 hover:bg-red-100 dark:hover:bg-red-900'}">
+                            Blocked
+                        </button>
+                        <button onclick='setDeviceTrust("${device.mac}", "unset")' class="px-4 py-2 rounded text-sm font-medium transition-colors ${trustStatus === 'unset' ? 'bg-blue-600 text-white ring-2 ring-blue-400' : 'bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-500'}">
+                            Unset
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Custom Name -->
+                <div>
+                    <label class="detail-label">Custom Name</label>
+                    <div class="flex space-x-2">
+                        <input type="text" id="device-custom-name" class="form-input flex-1" placeholder="Give this device a friendly name..."
+                            value="${device.custom_name || ''}">
+                        <button onclick='saveDeviceCustomName("${device.mac}")' class="btn-primary text-sm">Save Name</button>
+                    </div>
+                </div>
+
+                <!-- Notes -->
                 <div>
                     <label class="detail-label">Notes</label>
                     <textarea
@@ -205,7 +429,7 @@ async function showDeviceDetails(mac) {
                         rows="3"
                         placeholder="Add notes about this device..."
                     >${device.notes || ''}</textarea>
-                    <button onclick='saveDeviceNotes("${device.mac}")' class="btn-primary mt-2">
+                    <button onclick='saveDeviceNotes("${device.mac}")' class="btn-primary mt-2 text-sm">
                         Save Notes
                     </button>
                 </div>
@@ -214,9 +438,87 @@ async function showDeviceDetails(mac) {
 
         document.getElementById('device-modal').classList.remove('hidden');
 
+        // Load device events
+        loadDeviceEvents(mac);
+
     } catch (error) {
         console.error('Error loading device details:', error);
         showNotification('Failed to load device details', 'error');
+    }
+}
+
+async function loadDeviceEvents(mac) {
+    const container = document.getElementById('device-events');
+    try {
+        const response = await fetch(`/api/events/${mac}`);
+        if (!response.ok) {
+            container.innerHTML = '<div class="text-sm text-gray-500">No event history available</div>';
+            return;
+        }
+        const data = await response.json();
+        const events = data.events || data || [];
+
+        container.innerHTML = '';
+        if (events.length === 0) {
+            container.innerHTML = '<div class="text-sm text-gray-500">No events recorded for this device</div>';
+            return;
+        }
+
+        events.slice(0, 15).forEach(event => {
+            const div = document.createElement('div');
+            div.className = 'flex items-center space-x-2 text-sm p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700';
+            div.innerHTML = `
+                <div class="w-2 h-2 rounded-full ${event.type === 'online' ? 'bg-green-500' : event.type === 'offline' ? 'bg-red-500' : 'bg-blue-500'}"></div>
+                <span class="flex-1 dark:text-gray-300">${event.description || event.message || event.type || 'Event'}</span>
+                <span class="text-xs text-gray-500">${event.timestamp ? formatTimeAgo(new Date(event.timestamp)) : ''}</span>
+            `;
+            container.appendChild(div);
+        });
+    } catch (error) {
+        container.innerHTML = '<div class="text-sm text-gray-500">Could not load event history</div>';
+    }
+}
+
+async function setDeviceTrust(mac, status) {
+    try {
+        const response = await fetch(`/api/devices/${mac}/trust`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: status })
+        });
+
+        if (response.ok) {
+            showNotification(`Device marked as ${status}`, 'success');
+            showDeviceDetails(mac); // Refresh modal
+            loadDevices(); // Refresh table
+        } else {
+            showNotification('Failed to update trust status', 'error');
+        }
+    } catch (error) {
+        console.error('Error setting trust status:', error);
+        showNotification('Failed to update trust status', 'error');
+    }
+}
+
+async function saveDeviceCustomName(mac) {
+    try {
+        const customName = document.getElementById('device-custom-name').value;
+
+        const response = await fetch(`/api/devices/${mac}/name`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ custom_name: customName })
+        });
+
+        if (response.ok) {
+            showNotification('Custom name saved', 'success');
+            loadDevices();
+        } else {
+            showNotification('Failed to save custom name', 'error');
+        }
+    } catch (error) {
+        console.error('Error saving custom name:', error);
+        showNotification('Failed to save custom name', 'error');
     }
 }
 
@@ -236,6 +538,8 @@ async function saveDeviceNotes(mac) {
 
         if (response.ok) {
             showNotification('Notes saved successfully', 'success');
+        } else {
+            showNotification('Failed to save notes', 'error');
         }
     } catch (error) {
         console.error('Error saving notes:', error);
