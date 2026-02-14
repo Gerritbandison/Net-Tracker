@@ -37,6 +37,17 @@
             </div>
 
             <div>
+                <label class="detail-label dark:text-gray-300">Default Scan Profile</label>
+                <select id="scan-profile" class="form-select w-full">
+                    <option value="standard">Standard (balanced speed/detail)</option>
+                    <option value="quick">Quick (fast, fewer details)</option>
+                    <option value="deep">Deep (thorough, slower)</option>
+                    <option value="stealth">Stealth (low profile)</option>
+                </select>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Default profile for automated scans</p>
+            </div>
+
+            <div>
                 <label class="inline-flex items-center">
                     <input type="checkbox" id="service-detection" class="form-checkbox">
                     <span class="ml-2 dark:text-gray-300">Enable service detection (slower scans)</span>
@@ -237,6 +248,10 @@
             <div class="flex justify-between text-sm">
                 <span class="text-gray-600 dark:text-gray-400"><kbd class="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded text-xs">Esc</kbd></span>
                 <span class="text-gray-700 dark:text-gray-300">Close modal / clear search</span>
+            </div>
+            <div class="flex justify-between text-sm">
+                <span class="text-gray-600 dark:text-gray-400"><kbd class="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded text-xs">1-5</kbd></span>
+                <span class="text-gray-700 dark:text-gray-300">Navigate pages (Overview, Devices, WiFi, Insights, Settings)</span>
             </div>
         </div>
     </div>

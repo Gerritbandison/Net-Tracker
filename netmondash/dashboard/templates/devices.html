@@ -7,7 +7,7 @@
 </div>
 
 <!-- Device Count Summary -->
-<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
     <div class="stat-card text-center">
         <div class="stat-label">Total</div>
         <div class="stat-value text-2xl" id="device-count-total">--</div>
@@ -20,6 +20,14 @@
         <div class="stat-label">Offline</div>
         <div class="stat-value text-2xl text-red-600" id="device-count-offline">--</div>
     </div>
+    <div class="stat-card text-center">
+        <div class="stat-label">Avg Latency</div>
+        <div class="stat-value text-2xl text-yellow-600" id="device-avg-latency">--</div>
+    </div>
+    <div class="stat-card text-center">
+        <div class="stat-label">High Risk</div>
+        <div class="stat-value text-2xl text-red-600" id="device-high-risk">--</div>
+    </div>
 </div>
 
 <!-- Filters -->
@@ -27,14 +35,14 @@
     <div class="flex flex-wrap gap-4 items-center">
         <div>
             <label class="inline-flex items-center">
-                <input type="checkbox" id="filter-online" class="form-checkbox" onchange="loadDevices()">
+                <input type="checkbox" id="filter-online" class="form-checkbox" onchange="loadDevicesPage(1)">
                 <span class="ml-2 dark:text-gray-300">Show online only</span>
             </label>
         </div>
 
         <!-- Category Filter -->
         <div>
-            <select id="filter-category" class="form-select" onchange="filterDevicesTable()">
+            <select id="filter-category" class="form-select" onchange="loadDevicesPage(1)">
                 <option value="">All Categories</option>
                 <option value="computer">Computer</option>
                 <option value="phone">Phone</option>
@@ -48,13 +56,31 @@
             </select>
         </div>
 
+        <!-- Sort by -->
+        <div>
+            <select id="sort-by" class="form-select" onchange="loadDevicesPage(currentDevicePage)">
+                <option value="last_seen">Last Seen</option>
+                <option value="ip">IP Address</option>
+                <option value="hostname">Hostname</option>
+                <option value="vendor">Vendor</option>
+                <option value="risk_score">Risk Score</option>
+                <option value="latency">Latency</option>
+            </select>
+        </div>
+        <div>
+            <select id="sort-order" class="form-select" onchange="loadDevicesPage(currentDevicePage)">
+                <option value="desc">Descending</option>
+                <option value="asc">Ascending</option>
+            </select>
+        </div>
+
         <div class="flex-1">
             <input
                 type="text"
                 id="search-devices"
                 class="form-input w-full"
                 placeholder="Search by IP, MAC, hostname, or vendor..."
-                onkeyup="filterDevicesTable()"
+                oninput="debouncedSearch()"
             >
         </div>
 
@@ -96,15 +122,15 @@
                     <th class="w-10">
                         <input type="checkbox" id="select-all-devices" class="form-checkbox" onchange="toggleSelectAll(this)">
                     </th>
-                    <th onclick="sortTable(0)">IP Address &#8693;</th>
-                    <th onclick="sortTable(1)">MAC Address &#8693;</th>
-                    <th onclick="sortTable(2)">Hostname &#8693;</th>
-                    <th onclick="sortTable(3)">Vendor &#8693;</th>
+                    <th>IP Address</th>
+                    <th>MAC Address</th>
+                    <th>Hostname</th>
+                    <th>Vendor</th>
                     <th>Category</th>
-                    <th onclick="sortTable(4)">Open Ports</th>
+                    <th>Open Ports</th>
                     <th>Latency</th>
-                    <th onclick="sortTable(5)">First Seen &#8693;</th>
-                    <th onclick="sortTable(6)">Last Seen &#8693;</th>
+                    <th>Risk</th>
+                    <th>Last Seen</th>
                     <th>Status</th>
                     <th>Actions</th>
                 </tr>
@@ -116,11 +142,13 @@
             </tbody>
         </table>
     </div>
+    <!-- Pagination -->
+    <div id="devices-pagination" class="mt-4"></div>
 </div>
 
 <!-- Device Details Modal -->
 <div id="device-modal" class="modal hidden">
-    <div class="modal-content" style="max-width: 700px;">
+    <div class="modal-content" style="max-width: 750px;">
         <div class="modal-header">
             <h3 class="text-xl font-bold dark:text-gray-100">Device Details</h3>
             <button onclick="closeDeviceModal()" class="text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 text-2xl">&times;</button>
@@ -129,11 +157,21 @@
             <!-- Populated dynamically -->
         </div>
 
-        <!-- Device Event History -->
+        <!-- Tabs for extra info -->
         <div class="px-6 pb-4">
-            <h4 class="font-semibold text-gray-700 dark:text-gray-300 mb-2 mt-4">Event History</h4>
-            <div id="device-events" class="space-y-2 max-h-48 overflow-y-auto">
+            <div class="flex space-x-4 border-b border-gray-200 dark:border-gray-700 mb-3">
+                <button onclick="showDeviceTab('events')" id="tab-events" class="py-2 px-1 text-sm font-medium border-b-2 border-blue-600 text-blue-600">Events</button>
+                <button onclick="showDeviceTab('changelog')" id="tab-changelog" class="py-2 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Changelog</button>
+                <button onclick="showDeviceTab('uptime')" id="tab-uptime" class="py-2 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Uptime</button>
+            </div>
+            <div id="device-tab-events" class="space-y-2 max-h-48 overflow-y-auto">
                 <div class="text-sm text-gray-500">Loading events...</div>
+            </div>
+            <div id="device-tab-changelog" class="space-y-2 max-h-48 overflow-y-auto hidden">
+                <div class="text-sm text-gray-500">Loading changelog...</div>
+            </div>
+            <div id="device-tab-uptime" class="space-y-2 max-h-48 overflow-y-auto hidden">
+                <div class="text-sm text-gray-500">Loading uptime...</div>
             </div>
         </div>
 
@@ -145,38 +183,73 @@
 {% endblock %}
 
 {% block page_init %}
-loadDevices();
+loadDevicesPage(1);
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
 let devicesData = [];
 let selectedDevices = new Set();
+let currentDevicePage = 1;
+let totalDevicePages = 1;
+const devicesPerPage = 25;
 
-async function loadDevices() {
+const debouncedSearch = debounce(function() {
+    loadDevicesPage(1);
+}, 300);
+
+async function loadDevicesPage(page) {
+    currentDevicePage = page;
     try {
         const onlineOnly = document.getElementById('filter-online').checked;
-        const response = await fetch(`/api/devices?online_only=${onlineOnly}`);
+        const search = document.getElementById('search-devices').value;
+        const sortBy = document.getElementById('sort-by').value;
+        const sortOrder = document.getElementById('sort-order').value;
+
+        let url = `/api/devices?page=${page}&per_page=${devicesPerPage}&sort_by=${sortBy}&sort_order=${sortOrder}`;
+        if (onlineOnly) url += '&online_only=true';
+        if (search) url += '&search=' + encodeURIComponent(search);
+
+        const response = await fetch(url);
         const data = await response.json();
 
-        devicesData = data.devices;
+        if (data.devices) {
+            devicesData = data.devices;
+            totalDevicePages = data.total_pages || Math.ceil((data.total || data.devices.length) / devicesPerPage);
+            renderDevicesTable(devicesData);
+            renderPagination('devices-pagination', currentDevicePage, totalDevicePages, 'loadDevicesPage');
+        } else if (data.items) {
+            devicesData = data.items;
+            totalDevicePages = data.total_pages || 1;
+            renderDevicesTable(devicesData);
+            renderPagination('devices-pagination', currentDevicePage, totalDevicePages, 'loadDevicesPage');
+        }
 
-        // Update device counts
-        const allResponse = await fetch('/api/devices?online_only=false');
-        const allData = await allResponse.json();
-        const allDevices = allData.devices;
-        const onlineCount = allDevices.filter(d => d.is_online).length;
-
-        document.getElementById('device-count-total').textContent = allDevices.length;
-        document.getElementById('device-count-online').textContent = onlineCount;
-        document.getElementById('device-count-offline').textContent = allDevices.length - onlineCount;
-
-        renderDevicesTable(devicesData);
+        // Update counts
+        updateDeviceCounts();
 
     } catch (error) {
         console.error('Error loading devices:', error);
         showNotification('Failed to load devices', 'error');
     }
+}
+
+function loadDevices() { loadDevicesPage(1); }
+
+async function updateDeviceCounts() {
+    try {
+        const response = await fetch('/api/stats');
+        const stats = await response.json();
+        document.getElementById('device-count-total').textContent = stats.total_devices || 0;
+        document.getElementById('device-count-online').textContent = stats.online_devices || 0;
+        document.getElementById('device-count-offline').textContent = (stats.total_devices || 0) - (stats.online_devices || 0);
+        if (stats.avg_latency !== undefined) {
+            document.getElementById('device-avg-latency').textContent = stats.avg_latency.toFixed(1) + ' ms';
+        }
+        if (stats.high_risk_count !== undefined) {
+            document.getElementById('device-high-risk').textContent = stats.high_risk_count;
+        }
+    } catch (e) {}
 }
 
 function getCategoryBadge(category) {
@@ -229,7 +302,7 @@ function renderDevicesTable(devices) {
                     ? `<span class="${device.latency < 10 ? 'text-green-600' : device.latency < 50 ? 'text-yellow-600' : 'text-red-600'}">${device.latency.toFixed(1)} ms</span>`
                     : '<span class="text-gray-400">--</span>'}
             </td>
-            <td class="text-sm">${formatDateTime(new Date(device.first_seen))}</td>
+            <td>${renderRiskBadge(device.risk_score)}</td>
             <td class="text-sm">${formatTimeAgo(new Date(device.last_seen))}</td>
             <td>
                 <span class="status-badge status-${device.is_online ? 'online' : 'offline'}">
@@ -245,47 +318,18 @@ function renderDevicesTable(devices) {
     });
 }
 
-function filterDevicesTable() {
-    const searchTerm = document.getElementById('search-devices').value.toLowerCase();
-    const categoryFilter = document.getElementById('filter-category').value.toLowerCase();
-
-    const filtered = devicesData.filter(device => {
-        const matchesSearch = !searchTerm ||
-            device.ip.toLowerCase().includes(searchTerm) ||
-            device.mac.toLowerCase().includes(searchTerm) ||
-            (device.hostname && device.hostname.toLowerCase().includes(searchTerm)) ||
-            (device.vendor && device.vendor.toLowerCase().includes(searchTerm));
-
-        const matchesCategory = !categoryFilter ||
-            (device.category && device.category.toLowerCase() === categoryFilter) ||
-            (!device.category && categoryFilter === 'unknown');
-
-        return matchesSearch && matchesCategory;
-    });
-
-    renderDevicesTable(filtered);
-}
-
 // Bulk selection
 function toggleDeviceSelect(mac, checked) {
-    if (checked) {
-        selectedDevices.add(mac);
-    } else {
-        selectedDevices.delete(mac);
-    }
+    if (checked) selectedDevices.add(mac);
+    else selectedDevices.delete(mac);
     updateBulkActionsBar();
 }
 
 function toggleSelectAll(checkbox) {
-    const checkboxes = document.querySelectorAll('.device-select');
-    checkboxes.forEach(cb => {
+    document.querySelectorAll('.device-select').forEach(cb => {
         cb.checked = checkbox.checked;
-        const mac = cb.dataset.mac;
-        if (checkbox.checked) {
-            selectedDevices.add(mac);
-        } else {
-            selectedDevices.delete(mac);
-        }
+        if (checkbox.checked) selectedDevices.add(cb.dataset.mac);
+        else selectedDevices.delete(cb.dataset.mac);
     });
     updateBulkActionsBar();
 }
@@ -299,37 +343,40 @@ function clearBulkSelection() {
 
 function updateBulkActionsBar() {
     const bar = document.getElementById('bulk-actions-bar');
-    const count = selectedDevices.size;
-    document.getElementById('bulk-selected-count').textContent = count;
-    if (count > 0) {
-        bar.classList.remove('hidden');
-    } else {
-        bar.classList.add('hidden');
-    }
+    document.getElementById('bulk-selected-count').textContent = selectedDevices.size;
+    if (selectedDevices.size > 0) bar.classList.remove('hidden');
+    else bar.classList.add('hidden');
 }
 
 async function bulkAction(action) {
     if (selectedDevices.size === 0) return;
-
     const macs = Array.from(selectedDevices);
     let successCount = 0;
-
     for (const mac of macs) {
         try {
             const response = await fetch(`/api/devices/${mac}/trust`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ status: action })
             });
             if (response.ok) successCount++;
-        } catch (e) {
-            console.error(`Failed to update ${mac}:`, e);
-        }
+        } catch (e) { console.error(`Failed to update ${mac}:`, e); }
     }
-
     showNotification(`Updated ${successCount} of ${macs.length} devices to "${action}"`, 'success');
     clearBulkSelection();
-    loadDevices();
+    loadDevicesPage(currentDevicePage);
+}
+
+// Device modal tabs
+function showDeviceTab(tab) {
+    ['events', 'changelog', 'uptime'].forEach(t => {
+        document.getElementById('device-tab-' + t).classList.toggle('hidden', t !== tab);
+        const tabBtn = document.getElementById('tab-' + t);
+        if (t === tab) {
+            tabBtn.className = 'py-2 px-1 text-sm font-medium border-b-2 border-blue-600 text-blue-600';
+        } else {
+            tabBtn.className = 'py-2 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 dark:hover:text-gray-300';
+        }
+    });
 }
 
 async function showDeviceDetails(mac) {
@@ -338,12 +385,6 @@ async function showDeviceDetails(mac) {
         const device = await response.json();
 
         const trustStatus = device.trust_status || 'unset';
-        const trustBtnClass = {
-            'trusted': 'bg-green-600 text-white',
-            'blocked': 'bg-red-600 text-white',
-            'unset': 'bg-gray-200 text-gray-700 dark:bg-gray-600 dark:text-gray-300'
-        };
-
         const detailsDiv = document.getElementById('device-details');
         detailsDiv.innerHTML = `
             <div class="space-y-4">
@@ -369,8 +410,16 @@ async function showDeviceDetails(mac) {
                         <div class="detail-value">${getCategoryBadge(device.category)}</div>
                     </div>
                     <div>
+                        <label class="detail-label">Risk Score</label>
+                        <div class="detail-value">${renderRiskBadge(device.risk_score)}</div>
+                    </div>
+                    <div>
                         <label class="detail-label">Latency</label>
-                        <div class="detail-value">${device.latency !== undefined && device.latency !== null ? device.latency.toFixed(1) + ' ms' : 'N/A'}</div>
+                        <div class="detail-value">${device.latency !== undefined && device.latency !== null ? device.latency.toFixed(1) + ' ms' : 'N/A'}${device.jitter_ms ? ' (jitter: ' + device.jitter_ms.toFixed(1) + ' ms)' : ''}</div>
+                    </div>
+                    <div>
+                        <label class="detail-label">Packet Loss</label>
+                        <div class="detail-value">${device.packet_loss !== undefined && device.packet_loss !== null ? device.packet_loss.toFixed(1) + '%' : 'N/A'}</div>
                     </div>
                     <div>
                         <label class="detail-label">First Seen</label>
@@ -423,23 +472,17 @@ async function showDeviceDetails(mac) {
                 <!-- Notes -->
                 <div>
                     <label class="detail-label">Notes</label>
-                    <textarea
-                        id="device-notes"
-                        class="form-textarea w-full"
-                        rows="3"
-                        placeholder="Add notes about this device..."
-                    >${device.notes || ''}</textarea>
-                    <button onclick='saveDeviceNotes("${device.mac}")' class="btn-primary mt-2 text-sm">
-                        Save Notes
-                    </button>
+                    <textarea id="device-notes" class="form-textarea w-full" rows="3" placeholder="Add notes about this device...">${device.notes || ''}</textarea>
+                    <button onclick='saveDeviceNotes("${device.mac}")' class="btn-primary mt-2 text-sm">Save Notes</button>
                 </div>
             </div>
         `;
 
         document.getElementById('device-modal').classList.remove('hidden');
-
-        // Load device events
+        showDeviceTab('events');
         loadDeviceEvents(mac);
+        loadDeviceChangelog(mac);
+        loadDeviceUptime(mac);
 
     } catch (error) {
         console.error('Error loading device details:', error);
@@ -448,22 +491,14 @@ async function showDeviceDetails(mac) {
 }
 
 async function loadDeviceEvents(mac) {
-    const container = document.getElementById('device-events');
+    const container = document.getElementById('device-tab-events');
     try {
         const response = await fetch(`/api/events/${mac}`);
-        if (!response.ok) {
-            container.innerHTML = '<div class="text-sm text-gray-500">No event history available</div>';
-            return;
-        }
+        if (!response.ok) { container.innerHTML = '<div class="text-sm text-gray-500">No event history available</div>'; return; }
         const data = await response.json();
         const events = data.events || data || [];
-
         container.innerHTML = '';
-        if (events.length === 0) {
-            container.innerHTML = '<div class="text-sm text-gray-500">No events recorded for this device</div>';
-            return;
-        }
-
+        if (events.length === 0) { container.innerHTML = '<div class="text-sm text-gray-500">No events recorded</div>'; return; }
         events.slice(0, 15).forEach(event => {
             const div = document.createElement('div');
             div.className = 'flex items-center space-x-2 text-sm p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700';
@@ -475,27 +510,98 @@ async function loadDeviceEvents(mac) {
             container.appendChild(div);
         });
     } catch (error) {
-        container.innerHTML = '<div class="text-sm text-gray-500">Could not load event history</div>';
+        container.innerHTML = '<div class="text-sm text-gray-500">Could not load events</div>';
+    }
+}
+
+async function loadDeviceChangelog(mac) {
+    const container = document.getElementById('device-tab-changelog');
+    try {
+        const response = await fetch(`/api/devices/${mac}/changelog`);
+        if (!response.ok) { container.innerHTML = '<div class="text-sm text-gray-500">No changelog available</div>'; return; }
+        const data = await response.json();
+        const changes = data.changes || data || [];
+        container.innerHTML = '';
+        if (changes.length === 0) { container.innerHTML = '<div class="text-sm text-gray-500">No changes recorded</div>'; return; }
+        changes.slice(0, 20).forEach(change => {
+            const div = document.createElement('div');
+            div.className = 'text-sm p-2 rounded bg-gray-50 dark:bg-gray-800';
+            div.innerHTML = `
+                <div class="flex justify-between items-start">
+                    <div>
+                        <span class="font-medium dark:text-gray-200">${change.field || 'unknown'}</span>:
+                        <span class="text-gray-500">${change.old_value || '--'}</span> &rarr;
+                        <span class="text-blue-600 dark:text-blue-400">${change.new_value || '--'}</span>
+                    </div>
+                    <span class="text-xs text-gray-400 ml-2 flex-shrink-0">${change.timestamp ? formatTimeAgo(new Date(change.timestamp)) : ''}</span>
+                </div>
+            `;
+            container.appendChild(div);
+        });
+    } catch (error) {
+        container.innerHTML = '<div class="text-sm text-gray-500">Could not load changelog</div>';
+    }
+}
+
+async function loadDeviceUptime(mac) {
+    const container = document.getElementById('device-tab-uptime');
+    try {
+        const response = await fetch(`/api/devices/${mac}/uptime`);
+        if (!response.ok) { container.innerHTML = '<div class="text-sm text-gray-500">No uptime data</div>'; return; }
+        const data = await response.json();
+        const records = data.records || data.uptime || data || [];
+        container.innerHTML = '';
+        if (records.length === 0 && !data.uptime_percent) {
+            container.innerHTML = '<div class="text-sm text-gray-500">No uptime records</div>';
+            return;
+        }
+        if (data.uptime_percent !== undefined) {
+            const pct = data.uptime_percent;
+            const barColor = pct >= 99 ? 'bg-green-500' : pct >= 95 ? 'bg-yellow-500' : 'bg-red-500';
+            container.innerHTML += `
+                <div class="mb-3">
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="dark:text-gray-300">Uptime (7d)</span>
+                        <span class="font-semibold dark:text-gray-200">${pct.toFixed(2)}%</span>
+                    </div>
+                    <div class="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                        <div class="h-full ${barColor} rounded-full" style="width: ${pct}%"></div>
+                    </div>
+                </div>
+            `;
+        }
+        if (Array.isArray(records)) {
+            records.slice(0, 10).forEach(rec => {
+                const div = document.createElement('div');
+                const statusClass = rec.status === 'online' ? 'text-green-600' : 'text-red-600';
+                div.className = 'flex items-center justify-between text-sm p-1';
+                div.innerHTML = `
+                    <span class="${statusClass} font-medium">${rec.status || 'unknown'}</span>
+                    <span class="text-gray-500">${rec.duration ? formatDuration(rec.duration) : ''}</span>
+                    <span class="text-xs text-gray-400">${rec.timestamp ? formatTimeAgo(new Date(rec.timestamp)) : ''}</span>
+                `;
+                container.appendChild(div);
+            });
+        }
+    } catch (error) {
+        container.innerHTML = '<div class="text-sm text-gray-500">Could not load uptime data</div>';
     }
 }
 
 async function setDeviceTrust(mac, status) {
     try {
         const response = await fetch(`/api/devices/${mac}/trust`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: status })
         });
-
         if (response.ok) {
             showNotification(`Device marked as ${status}`, 'success');
-            showDeviceDetails(mac); // Refresh modal
-            loadDevices(); // Refresh table
+            showDeviceDetails(mac);
+            loadDevicesPage(currentDevicePage);
         } else {
             showNotification('Failed to update trust status', 'error');
         }
     } catch (error) {
-        console.error('Error setting trust status:', error);
         showNotification('Failed to update trust status', 'error');
     }
 }
@@ -503,75 +609,37 @@ async function setDeviceTrust(mac, status) {
 async function saveDeviceCustomName(mac) {
     try {
         const customName = document.getElementById('device-custom-name').value;
-
         const response = await fetch(`/api/devices/${mac}/name`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ custom_name: customName })
         });
-
         if (response.ok) {
             showNotification('Custom name saved', 'success');
-            loadDevices();
+            loadDevicesPage(currentDevicePage);
         } else {
             showNotification('Failed to save custom name', 'error');
         }
     } catch (error) {
-        console.error('Error saving custom name:', error);
         showNotification('Failed to save custom name', 'error');
     }
-}
-
-function closeDeviceModal() {
-    document.getElementById('device-modal').classList.add('hidden');
 }
 
 async function saveDeviceNotes(mac) {
     try {
         const notes = document.getElementById('device-notes').value;
-
         const response = await fetch(`/api/devices/${mac}/notes`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ notes })
         });
-
-        if (response.ok) {
-            showNotification('Notes saved successfully', 'success');
-        } else {
-            showNotification('Failed to save notes', 'error');
-        }
+        if (response.ok) showNotification('Notes saved successfully', 'success');
+        else showNotification('Failed to save notes', 'error');
     } catch (error) {
-        console.error('Error saving notes:', error);
         showNotification('Failed to save notes', 'error');
     }
 }
 
-let sortDirection = {};
-
-function sortTable(columnIndex) {
-    const direction = sortDirection[columnIndex] === 'asc' ? 'desc' : 'asc';
-    sortDirection[columnIndex] = direction;
-
-    devicesData.sort((a, b) => {
-        let aVal, bVal;
-
-        switch(columnIndex) {
-            case 0: aVal = a.ip; bVal = b.ip; break;
-            case 1: aVal = a.mac; bVal = b.mac; break;
-            case 2: aVal = a.hostname || ''; bVal = b.hostname || ''; break;
-            case 3: aVal = a.vendor || ''; bVal = b.vendor || ''; break;
-            case 5: aVal = new Date(a.first_seen); bVal = new Date(b.first_seen); break;
-            case 6: aVal = new Date(a.last_seen); bVal = new Date(b.last_seen); break;
-            default: return 0;
-        }
-
-        if (aVal < bVal) return direction === 'asc' ? -1 : 1;
-        if (aVal > bVal) return direction === 'asc' ? 1 : -1;
-        return 0;
-    });
-
-    renderDevicesTable(devicesData);
+function closeDeviceModal() {
+    document.getElementById('device-modal').classList.add('hidden');
 }
 </script>
 {% endblock %}

@@ -40,6 +40,77 @@
     </div>
 </div>
 
+<!-- Network Health + Risk Summary Row -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+    <!-- Network Health Gauge -->
+    <div class="card">
+        <h2 class="card-title">Network Health</h2>
+        <div id="health-gauge" style="height: 220px;">
+            <div class="flex items-center justify-center h-full text-gray-400">Loading...</div>
+        </div>
+        <div id="health-summary" class="mt-2 text-center text-sm text-gray-600 dark:text-gray-400"></div>
+    </div>
+
+    <!-- High Risk Devices -->
+    <div class="card">
+        <h2 class="card-title">High Risk Devices</h2>
+        <div id="risk-devices-list" class="space-y-2 max-h-64 overflow-y-auto">
+            <div class="text-gray-500 dark:text-gray-400 text-center">Loading...</div>
+        </div>
+    </div>
+
+    <!-- Alert Summary -->
+    <div class="card">
+        <h2 class="card-title">Alert Summary</h2>
+        <div id="alert-summary-chart" style="height: 200px;">
+            <div class="flex items-center justify-center h-full text-gray-400">Loading...</div>
+        </div>
+        <div id="alert-summary-stats" class="mt-2 space-y-1 text-sm"></div>
+    </div>
+</div>
+
+<!-- Trend Charts Row -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+    <!-- Device Count Trend -->
+    <div class="card">
+        <div class="flex items-center justify-between mb-2">
+            <h2 class="card-title mb-0">Device Trend (7d)</h2>
+            <select id="device-trend-days" class="form-select text-sm py-1" onchange="refreshDeviceTrend()">
+                <option value="7">7 days</option>
+                <option value="14">14 days</option>
+                <option value="30">30 days</option>
+            </select>
+        </div>
+        <div id="device-trend-chart" style="height: 200px;"></div>
+    </div>
+
+    <!-- Latency Trend -->
+    <div class="card">
+        <div class="flex items-center justify-between mb-2">
+            <h2 class="card-title mb-0">Latency Trend (7d)</h2>
+            <select id="latency-trend-days" class="form-select text-sm py-1" onchange="refreshLatencyTrend()">
+                <option value="7">7 days</option>
+                <option value="14">14 days</option>
+                <option value="30">30 days</option>
+            </select>
+        </div>
+        <div id="latency-trend-chart" style="height: 200px;"></div>
+    </div>
+
+    <!-- Alert Trend -->
+    <div class="card">
+        <div class="flex items-center justify-between mb-2">
+            <h2 class="card-title mb-0">Alert Trend (7d)</h2>
+            <select id="alert-trend-days" class="form-select text-sm py-1" onchange="refreshAlertTrend()">
+                <option value="7">7 days</option>
+                <option value="14">14 days</option>
+                <option value="30">30 days</option>
+            </select>
+        </div>
+        <div id="alert-trend-chart" style="height: 200px;"></div>
+    </div>
+</div>
+
 <!-- Main Content Grid -->
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <!-- Recent Devices -->
@@ -52,12 +123,13 @@
                         <th>IP Address</th>
                         <th>Hostname</th>
                         <th>Vendor</th>
+                        <th>Risk</th>
                         <th>Status</th>
                     </tr>
                 </thead>
                 <tbody id="recent-devices-body">
                     <tr>
-                        <td colspan="4" class="text-center text-gray-500">Loading...</td>
+                        <td colspan="5" class="text-center text-gray-500">Loading...</td>
                     </tr>
                 </tbody>
             </table>
@@ -112,15 +184,34 @@
 
 <!-- Quick Actions -->
 <div class="mt-6 flex flex-wrap gap-4">
-    <button onclick="triggerScan()" class="btn-primary">
+    <button onclick="triggerScan()" class="btn-primary" id="btn-trigger-scan">
         Trigger Network Scan
     </button>
+    <select id="scan-profile-select" class="form-select text-sm">
+        <option value="standard">Standard Scan</option>
+        <option value="quick">Quick Scan</option>
+        <option value="deep">Deep Scan</option>
+        <option value="stealth">Stealth Scan</option>
+    </select>
     <button onclick="exportData('devices', 'json')" class="btn-secondary">
         Export Data
     </button>
     <button onclick="runSecurityAnalysisFromOverview()" class="btn-secondary" style="background-color: #7C3AED;" onmouseover="this.style.backgroundColor='#6D28D9'" onmouseout="this.style.backgroundColor='#7C3AED'">
         Run Security Analysis
     </button>
+</div>
+
+<!-- Scan Progress Bar -->
+<div id="scan-progress-container" class="mt-4 hidden">
+    <div class="card">
+        <div class="flex items-center justify-between mb-2">
+            <span class="text-sm font-medium dark:text-gray-300">Scan in progress...</span>
+            <span id="scan-progress-text" class="text-sm text-gray-500">0%</span>
+        </div>
+        <div class="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+            <div id="scan-progress-bar" class="h-full bg-blue-500 rounded-full transition-all duration-500" style="width: 0%"></div>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
@@ -132,8 +223,12 @@ loadOverviewData();
 <script>
 async function loadOverviewData() {
     try {
-        // Load statistics
-        const statsResponse = await fetch('/api/stats');
+        // Load statistics and trends in parallel
+        const [statsResponse, alertSummaryResponse] = await Promise.all([
+            fetch('/api/stats'),
+            fetch('/api/alerts/summary').catch(() => null)
+        ]);
+
         const stats = await statsResponse.json();
 
         document.getElementById('total-devices').textContent = stats.total_devices || 0;
@@ -183,11 +278,27 @@ async function loadOverviewData() {
             document.getElementById('last-scan').textContent = `Last: ${formatTimeAgo(lastScan)}`;
         }
 
+        // Network health gauge
+        loadNetworkHealthGauge();
+
+        // High risk devices
+        loadHighRiskDevices();
+
+        // Alert summary
+        if (alertSummaryResponse && alertSummaryResponse.ok) {
+            const alertSummary = await alertSummaryResponse.json();
+            renderAlertSummary(alertSummary);
+        }
+
+        // Trend charts
+        loadDeviceCountTrend('device-trend-chart', 7);
+        loadLatencyTrend('latency-trend-chart', 7);
+        loadAlertTrend('alert-trend-chart', 7);
+
         // Device categories pie chart
         if (stats.categories) {
             plotCategoryChart(stats.categories);
         } else {
-            // Fallback: compute from devices
             loadCategoryChart();
         }
 
@@ -207,7 +318,7 @@ async function loadOverviewData() {
         tbody.innerHTML = '';
 
         if (devices.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-gray-500">No devices found</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center text-gray-500">No devices found</td></tr>';
         } else {
             devices.forEach(device => {
                 const row = tbody.insertRow();
@@ -215,6 +326,7 @@ async function loadOverviewData() {
                     <td class="font-mono">${device.ip}</td>
                     <td>${device.hostname || 'Unknown'}</td>
                     <td>${device.vendor || 'Unknown'}</td>
+                    <td>${renderRiskBadge(device.risk_score)}</td>
                     <td>
                         <span class="status-badge status-${device.is_online ? 'online' : 'offline'}">
                             ${device.is_online ? 'Online' : 'Offline'}
@@ -260,41 +372,107 @@ async function loadOverviewData() {
     }
 }
 
+async function loadNetworkHealthGauge() {
+    try {
+        const data = await fetchJSON('/api/network/health');
+        if (data) {
+            const score = data.health_score || data.overall_score || 0;
+            renderGauge('health-gauge', score, { suffix: '', dtick: 25 });
+            const summaryEl = document.getElementById('health-summary');
+            const parts = [];
+            if (data.online_count !== undefined) parts.push(`${data.online_count} online`);
+            if (data.offline_count !== undefined) parts.push(`${data.offline_count} offline`);
+            if (data.avg_latency !== undefined) parts.push(`${data.avg_latency.toFixed(1)}ms avg latency`);
+            summaryEl.textContent = parts.join(' | ') || '';
+        }
+    } catch (e) {
+        document.getElementById('health-gauge').innerHTML = '<div class="flex items-center justify-center h-full text-gray-400">Health data unavailable</div>';
+    }
+}
+
+async function loadHighRiskDevices() {
+    const container = document.getElementById('risk-devices-list');
+    try {
+        const data = await fetchJSON('/api/analyze/device-risks');
+        if (!data || !data.risks || data.risks.length === 0) {
+            container.innerHTML = '<div class="text-green-600 text-center text-sm">No high-risk devices detected</div>';
+            return;
+        }
+        container.innerHTML = '';
+        const highRisk = data.risks.filter(d => d.score >= 40).slice(0, 8);
+        if (highRisk.length === 0) {
+            container.innerHTML = '<div class="text-green-600 text-center text-sm">All devices have low risk scores</div>';
+            return;
+        }
+        highRisk.forEach(device => {
+            const div = document.createElement('div');
+            div.className = 'flex items-center justify-between p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700';
+            div.innerHTML = `
+                <div class="flex-1 min-w-0">
+                    <div class="text-sm font-medium dark:text-gray-200 truncate">${device.ip || device.hostname || 'Unknown'}</div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400 truncate">${(device.risk_factors || []).slice(0, 2).join(', ')}</div>
+                </div>
+                <div class="flex-shrink-0 ml-2">${renderRiskBadge(device.score, device.grade)}</div>
+            `;
+            container.appendChild(div);
+        });
+    } catch (e) {
+        container.innerHTML = '<div class="text-gray-500 text-center text-sm">Risk analysis unavailable</div>';
+    }
+}
+
+function renderAlertSummary(summary) {
+    if (!summary) return;
+    const labels = [];
+    const values = [];
+    const colors = [];
+    if (summary.critical > 0) { labels.push('Critical'); values.push(summary.critical); colors.push('#EF4444'); }
+    if (summary.warning > 0) { labels.push('Warning'); values.push(summary.warning); colors.push('#F59E0B'); }
+    if (summary.info > 0) { labels.push('Info'); values.push(summary.info); colors.push('#3B82F6'); }
+
+    if (labels.length > 0) {
+        const c = getChartColors();
+        Plotly.newPlot('alert-summary-chart', [{
+            labels: labels, values: values, type: 'pie', hole: 0.5,
+            marker: { colors: colors },
+            textinfo: 'label+value', textposition: 'outside', automargin: true
+        }], {
+            margin: { t: 5, r: 5, b: 5, l: 5 }, showlegend: false,
+            paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+            font: { color: c.text }
+        }, { responsive: true, displayModeBar: false });
+    } else {
+        document.getElementById('alert-summary-chart').innerHTML = '<div class="flex items-center justify-center h-full text-green-500">No alerts</div>';
+    }
+
+    const statsEl = document.getElementById('alert-summary-stats');
+    statsEl.innerHTML = `
+        <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-400">Total</span><span class="font-semibold dark:text-gray-200">${summary.total || 0}</span></div>
+        <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-400">Unacknowledged</span><span class="font-semibold dark:text-gray-200">${summary.unacknowledged || 0}</span></div>
+    `;
+}
+
+function refreshDeviceTrend() {
+    const days = document.getElementById('device-trend-days').value;
+    loadDeviceCountTrend('device-trend-chart', parseInt(days));
+}
+function refreshLatencyTrend() {
+    const days = document.getElementById('latency-trend-days').value;
+    loadLatencyTrend('latency-trend-chart', parseInt(days));
+}
+function refreshAlertTrend() {
+    const days = document.getElementById('alert-trend-days').value;
+    loadAlertTrend('alert-trend-chart', parseInt(days));
+}
+
 function plotCategoryChart(categories) {
     const labels = Object.keys(categories);
     const values = Object.values(categories);
-
     if (labels.length === 0) {
         document.getElementById('category-chart').innerHTML = '<div class="flex items-center justify-center h-full text-gray-400">No category data available</div>';
         return;
     }
-
-    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#84CC16'];
-
-    const trace = {
-        labels: labels,
-        values: values,
-        type: 'pie',
-        hole: 0.4,
-        marker: {
-            colors: colors.slice(0, labels.length)
-        },
-        textinfo: 'label+percent',
-        textposition: 'outside',
-        automargin: true
-    };
-
-    const isDark = document.documentElement.classList.contains('dark');
-    const layout = {
-        margin: { t: 10, r: 10, b: 10, l: 10 },
-        showlegend: true,
-        legend: { orientation: 'h', y: -0.1, font: { color: isDark ? '#D1D5DB' : '#374151' } },
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)',
-        font: { color: isDark ? '#D1D5DB' : '#374151' }
-    };
-
-    Plotly.newPlot('category-chart', [trace], layout, {responsive: true});
+    renderPieChart('category-chart', labels, values);
 }
 
 async function loadCategoryChart() {
@@ -313,7 +491,6 @@ async function loadCategoryChart() {
 }
 
 function plotVendorsChart(topVendors) {
-    // topVendors expected as array of {vendor, count} or object {vendor: count}
     let vendorNames, vendorCounts;
     if (Array.isArray(topVendors)) {
         vendorNames = topVendors.map(v => v.vendor || v.name || 'Unknown');
@@ -322,57 +499,21 @@ function plotVendorsChart(topVendors) {
         vendorNames = Object.keys(topVendors);
         vendorCounts = Object.values(topVendors);
     }
-
     if (vendorNames.length === 0) {
         document.getElementById('vendors-chart').innerHTML = '<div class="flex items-center justify-center h-full text-gray-400">No vendor data available</div>';
         return;
     }
-
-    const isDark = document.documentElement.classList.contains('dark');
-
-    const trace = {
-        x: vendorCounts,
-        y: vendorNames,
-        type: 'bar',
-        orientation: 'h',
-        marker: {
-            color: '#3B82F6'
-        }
-    };
-
-    const layout = {
-        margin: { t: 10, r: 20, b: 40, l: 120 },
-        xaxis: {
-            title: 'Device Count',
-            color: isDark ? '#D1D5DB' : '#374151',
-            gridcolor: isDark ? '#374151' : '#E5E7EB'
-        },
-        yaxis: {
-            autorange: 'reversed',
-            color: isDark ? '#D1D5DB' : '#374151'
-        },
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)',
-        font: { color: isDark ? '#D1D5DB' : '#374151' }
-    };
-
-    Plotly.newPlot('vendors-chart', [trace], layout, {responsive: true});
+    renderBarChart('vendors-chart', vendorNames, vendorCounts, { horizontal: true, xTitle: 'Device Count' });
 }
 
 async function loadVendorsChart() {
     try {
-        const response = await fetch('/api/devices?online_only=false');
-        const data = await response.json();
-        const vendors = {};
-        data.devices.forEach(d => {
-            const v = d.vendor || 'Unknown';
-            vendors[v] = (vendors[v] || 0) + 1;
-        });
-        // Sort and take top 8
-        const sorted = Object.entries(vendors).sort((a, b) => b[1] - a[1]).slice(0, 8);
-        const topVendors = {};
-        sorted.forEach(([name, count]) => { topVendors[name] = count; });
-        plotVendorsChart(topVendors);
+        const data = await fetchJSON('/api/vendors');
+        if (data && data.vendors) {
+            const names = data.vendors.slice(0, 8).map(v => v.vendor || 'Unknown');
+            const counts = data.vendors.slice(0, 8).map(v => v.count || 0);
+            renderBarChart('vendors-chart', names, counts, { horizontal: true, xTitle: 'Device Count' });
+        }
     } catch (e) {
         console.error('Error loading vendors chart:', e);
     }
@@ -383,81 +524,36 @@ function plotActivityChart(scans) {
         document.getElementById('activity-chart').innerHTML = '<div class="flex items-center justify-center h-full text-gray-400">No scan data available</div>';
         return;
     }
-
     const timestamps = scans.map(s => new Date(s.timestamp));
     const deviceCounts = scans.map(s => s.device_count);
     const onlineCounts = scans.map(s => s.online_count || s.device_count);
+    const c = getChartColors();
 
-    const isDark = document.documentElement.classList.contains('dark');
-
-    const traceTotal = {
-        x: timestamps,
-        y: deviceCounts,
-        type: 'scatter',
-        mode: 'lines+markers',
-        name: 'Total Devices',
-        line: { color: '#3B82F6', width: 2 },
-        marker: { size: 5 },
-        fill: 'tozeroy',
-        fillcolor: 'rgba(59, 130, 246, 0.1)'
-    };
-
-    const traceOnline = {
-        x: timestamps,
-        y: onlineCounts,
-        type: 'scatter',
-        mode: 'lines+markers',
-        name: 'Online',
-        line: { color: '#10B981', width: 2 },
-        marker: { size: 5 }
-    };
-
-    const layout = {
-        xaxis: {
-            title: 'Time',
-            type: 'date',
-            color: isDark ? '#D1D5DB' : '#374151',
-            gridcolor: isDark ? '#374151' : '#E5E7EB'
-        },
-        yaxis: {
-            title: 'Device Count',
-            rangemode: 'tozero',
-            color: isDark ? '#D1D5DB' : '#374151',
-            gridcolor: isDark ? '#374151' : '#E5E7EB'
-        },
-        margin: { t: 20, r: 20, b: 40, l: 50 },
-        hovermode: 'closest',
-        legend: { orientation: 'h', y: 1.1, font: { color: isDark ? '#D1D5DB' : '#374151' } },
-        paper_bgcolor: 'rgba(0,0,0,0)',
-        plot_bgcolor: 'rgba(0,0,0,0)',
-        font: { color: isDark ? '#D1D5DB' : '#374151' }
-    };
-
-    Plotly.newPlot('activity-chart', [traceTotal, traceOnline], layout, {responsive: true});
+    Plotly.newPlot('activity-chart', [
+        { x: timestamps, y: deviceCounts, type: 'scatter', mode: 'lines+markers', name: 'Total', line: { color: c.primary, width: 2 }, marker: { size: 4 }, fill: 'tozeroy', fillcolor: 'rgba(59,130,246,0.1)' },
+        { x: timestamps, y: onlineCounts, type: 'scatter', mode: 'lines+markers', name: 'Online', line: { color: c.success, width: 2 }, marker: { size: 4 } }
+    ], getChartLayout({
+        xaxis: Object.assign(getAxisConfig('Time'), { type: 'date' }),
+        yaxis: Object.assign(getAxisConfig('Devices'), { rangemode: 'tozero' }),
+        legend: { orientation: 'h', y: 1.1, font: { color: c.text } }
+    }), { responsive: true });
 }
 
 async function loadNetworkTimeline() {
     const container = document.getElementById('network-timeline');
     try {
-        const response = await fetch('/api/events');
-        if (!response.ok) {
-            // Fallback: build timeline from alerts
-            await loadTimelineFromAlerts();
-            return;
-        }
+        const response = await fetch('/api/network/timeline');
+        if (!response.ok) { await loadTimelineFromAlerts(); return; }
         const data = await response.json();
         const events = data.events || data;
-
         container.innerHTML = '';
         if (!events || events.length === 0) {
             container.innerHTML = '<div class="text-center text-gray-500">No recent events</div>';
             return;
         }
-
-        const displayEvents = Array.isArray(events) ? events.slice(0, 20) : [];
-        displayEvents.forEach(event => {
-            const eventDiv = document.createElement('div');
+        (Array.isArray(events) ? events : []).slice(0, 20).forEach(event => {
             const typeColor = getEventTypeColor(event.type || event.event_type || 'info');
+            const eventDiv = document.createElement('div');
             eventDiv.className = 'flex items-start space-x-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors';
             eventDiv.innerHTML = `
                 <div class="flex-shrink-0 w-3 h-3 rounded-full mt-1.5 ${typeColor}"></div>
@@ -474,7 +570,6 @@ async function loadNetworkTimeline() {
             container.appendChild(eventDiv);
         });
     } catch (error) {
-        // Fallback to alerts-based timeline
         await loadTimelineFromAlerts();
     }
 }
@@ -485,13 +580,8 @@ async function loadTimelineFromAlerts() {
         const response = await fetch('/api/alerts?limit=10');
         const data = await response.json();
         const alerts = data.alerts || [];
-
         container.innerHTML = '';
-        if (alerts.length === 0) {
-            container.innerHTML = '<div class="text-center text-gray-500">No recent events</div>';
-            return;
-        }
-
+        if (alerts.length === 0) { container.innerHTML = '<div class="text-center text-gray-500">No recent events</div>'; return; }
         alerts.forEach(alert => {
             const typeColor = getEventTypeColor(alert.severity || 'info');
             const eventDiv = document.createElement('div');
@@ -504,9 +594,7 @@ async function loadTimelineFromAlerts() {
                         ${alert.source_ip ? alert.source_ip + ' &bull; ' : ''}${formatTimeAgo(new Date(alert.timestamp))}
                     </div>
                 </div>
-                <div class="flex-shrink-0">
-                    <span class="severity-badge severity-${alert.severity}">${alert.severity.toUpperCase()}</span>
-                </div>
+                <div class="flex-shrink-0"><span class="severity-badge severity-${alert.severity}">${alert.severity.toUpperCase()}</span></div>
             `;
             container.appendChild(eventDiv);
         });
@@ -517,32 +605,37 @@ async function loadTimelineFromAlerts() {
 
 function getEventTypeColor(type) {
     const colors = {
-        'new_device': 'bg-blue-500',
-        'device_offline': 'bg-red-500',
-        'device_online': 'bg-green-500',
-        'scan': 'bg-indigo-500',
-        'alert': 'bg-yellow-500',
-        'critical': 'bg-red-600',
-        'warning': 'bg-yellow-500',
-        'info': 'bg-blue-500',
-        'success': 'bg-green-500',
+        'new_device': 'bg-blue-500', 'device_offline': 'bg-red-500', 'device_online': 'bg-green-500',
+        'scan': 'bg-indigo-500', 'alert': 'bg-yellow-500', 'critical': 'bg-red-600',
+        'warning': 'bg-yellow-500', 'info': 'bg-blue-500', 'success': 'bg-green-500',
     };
     return colors[type] || 'bg-gray-400';
 }
 
 async function triggerScan() {
+    const btn = document.getElementById('btn-trigger-scan');
+    const profile = document.getElementById('scan-profile-select').value;
+    btn.disabled = true;
+    btn.textContent = 'Scanning...';
+    document.getElementById('scan-progress-container').classList.remove('hidden');
     try {
-        const response = await fetch('/api/scan/trigger', { method: 'POST' });
+        const response = await fetch('/api/scan/trigger', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ profile: profile })
+        });
         const result = await response.json();
-
         if (result.success) {
-            showNotification('Scan triggered successfully', 'success');
-            // Reload after a short delay
+            showNotification(`Scan triggered (${profile} profile)`, 'success');
             setTimeout(() => loadOverviewData(), 3000);
         }
     } catch (error) {
         console.error('Error triggering scan:', error);
         showNotification('Failed to trigger scan', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Trigger Network Scan';
+        setTimeout(() => document.getElementById('scan-progress-container').classList.add('hidden'), 5000);
     }
 }
 
@@ -552,7 +645,6 @@ async function runSecurityAnalysisFromOverview() {
         const response = await fetch('/api/analyze/security', { method: 'POST' });
         const data = await response.json();
         showNotification(`Security analysis complete: ${data.count} recommendations`, 'success');
-        // Reload stats to update security score
         loadOverviewData();
     } catch (error) {
         console.error('Error running security analysis:', error);
