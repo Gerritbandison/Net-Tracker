@@ -74,11 +74,62 @@
     </div>
 </div>
 
+<!-- Comprehensive Health Report -->
+<div class="card mb-6">
+    <div class="flex items-center justify-between">
+        <h2 class="card-title mb-0">Comprehensive Health Report</h2>
+        <button onclick="runComprehensiveAnalysis()" class="btn-primary text-sm" id="btn-comprehensive">
+            Generate Report
+        </button>
+    </div>
+    <div id="comprehensive-report" class="mt-4">
+        <div class="text-gray-500 dark:text-gray-400">Click "Generate Report" for a full network health assessment</div>
+    </div>
+</div>
+
+<!-- Trend Analysis + Device Risks Row -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+    <!-- Trend Analysis -->
+    <div class="card">
+        <h2 class="card-title">Network Trends</h2>
+        <div id="trend-analysis-results" class="space-y-3 mt-2">
+            <div class="text-gray-500 dark:text-gray-400">Loading trend data...</div>
+        </div>
+        <div id="trend-chart-container" style="height: 250px;" class="mt-3"></div>
+    </div>
+
+    <!-- Device Risk Scores -->
+    <div class="card">
+        <div class="flex items-center justify-between">
+            <h2 class="card-title mb-0">Device Risk Assessment</h2>
+            <button onclick="runDeviceRiskAnalysis()" class="btn-secondary text-sm" id="btn-risk-analysis">
+                Assess Risks
+            </button>
+        </div>
+        <div id="device-risk-list" class="space-y-2 mt-3 max-h-80 overflow-y-auto">
+            <div class="text-gray-500 dark:text-gray-400">Click "Assess Risks" to score all devices</div>
+        </div>
+    </div>
+</div>
+
 <!-- Anomaly Detection -->
 <div class="card mb-6">
     <h2 class="card-title">Anomaly Detection</h2>
     <div id="anomaly-results" class="space-y-3 mt-2">
         <div class="text-gray-500 dark:text-gray-400">Run security analysis to detect anomalies</div>
+    </div>
+</div>
+
+<!-- Performance Analysis -->
+<div class="card mb-6">
+    <div class="flex items-center justify-between">
+        <h2 class="card-title mb-0">Performance Analysis</h2>
+        <button onclick="runPerformanceAnalysis()" class="btn-secondary text-sm" id="btn-performance">
+            Analyze Performance
+        </button>
+    </div>
+    <div id="performance-results" class="mt-3">
+        <div class="text-gray-500 dark:text-gray-400">Click "Analyze Performance" to check latency and packet loss</div>
     </div>
 </div>
 
@@ -661,13 +712,178 @@ function setAnalysisStatus(message, type) {
     }
 }
 
-function copyToClipboard(text) {
-    navigator.clipboard.writeText(text).then(() => {
-        if (typeof showToast === 'function') showToast('Command copied to clipboard', 'success');
-        else if (typeof showNotification === 'function') showNotification('Command copied to clipboard', 'success');
-    }).catch(err => {
-        console.error('Failed to copy:', err);
-    });
+async function runComprehensiveAnalysis() {
+    const btn = document.getElementById('btn-comprehensive');
+    btn.disabled = true;
+    btn.textContent = 'Analyzing...';
+    const container = document.getElementById('comprehensive-report');
+    container.innerHTML = '<div class="text-gray-500">Generating comprehensive report...</div>';
+
+    try {
+        const response = await fetch('/api/analyze/comprehensive', { method: 'POST' });
+        const data = await response.json();
+        container.innerHTML = '';
+
+        // Overall score gauge
+        if (data.overall_score !== undefined) {
+            const scoreDiv = document.createElement('div');
+            scoreDiv.className = 'grid grid-cols-1 md:grid-cols-3 gap-4 mb-4';
+            scoreDiv.innerHTML = `
+                <div class="text-center">
+                    <div class="text-5xl font-bold" style="color: ${getSecurityScoreColor(data.overall_score)}">${data.overall_score}</div>
+                    <div class="text-sm text-gray-500 dark:text-gray-400 mt-1">Overall Score</div>
+                    <div class="text-xl font-bold" style="color: ${getSecurityScoreColor(data.overall_score)}">${data.overall_grade || '--'}</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-3xl font-bold text-blue-600">${data.total_devices || '--'}</div>
+                    <div class="text-sm text-gray-500 dark:text-gray-400 mt-1">Devices Analyzed</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-3xl font-bold text-yellow-600">${data.total_findings || '--'}</div>
+                    <div class="text-sm text-gray-500 dark:text-gray-400 mt-1">Total Findings</div>
+                </div>
+            `;
+            container.appendChild(scoreDiv);
+        }
+
+        // Sections
+        const sections = data.sections || [];
+        if (sections.length > 0) {
+            sections.forEach(section => {
+                const secDiv = document.createElement('div');
+                secDiv.className = 'p-3 rounded-lg bg-gray-50 dark:bg-gray-800 mb-2';
+                secDiv.innerHTML = `
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="font-semibold dark:text-gray-200">${section.name || 'Section'}</span>
+                        <span class="text-sm" style="color: ${getSecurityScoreColor(section.score)}">${section.score || '--'}/100</span>
+                    </div>
+                    <div class="text-sm text-gray-600 dark:text-gray-400">${section.summary || ''}</div>
+                `;
+                container.appendChild(secDiv);
+            });
+        }
+
+        // Recommendations
+        if (data.recommendations && data.recommendations.length > 0) {
+            const recHeader = document.createElement('h3');
+            recHeader.className = 'font-semibold text-gray-700 dark:text-gray-300 mt-4 mb-2';
+            recHeader.textContent = `Key Recommendations (${data.recommendations.length})`;
+            container.appendChild(recHeader);
+            displayRecommendations(data.recommendations.slice(0, 10), 'comprehensive-report');
+        }
+
+        showNotification('Comprehensive analysis complete', 'success');
+    } catch (error) {
+        container.innerHTML = '<div class="text-red-500">Failed to generate comprehensive report</div>';
+        console.error('Comprehensive analysis error:', error);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Generate Report';
+    }
 }
+
+async function runDeviceRiskAnalysis() {
+    const btn = document.getElementById('btn-risk-analysis');
+    btn.disabled = true;
+    btn.textContent = 'Assessing...';
+    const container = document.getElementById('device-risk-list');
+    container.innerHTML = '<div class="text-gray-500">Scoring device risks...</div>';
+
+    try {
+        const response = await fetch('/api/analyze/device-risks', { method: 'POST' });
+        const data = await response.json();
+        container.innerHTML = '';
+
+        const risks = data.risks || [];
+        if (risks.length === 0) {
+            container.innerHTML = '<div class="text-green-600">No devices to assess</div>';
+            return;
+        }
+
+        risks.forEach(device => {
+            const div = document.createElement('div');
+            div.className = 'flex items-center justify-between p-3 rounded-lg bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors';
+            div.innerHTML = `
+                <div class="flex-1 min-w-0">
+                    <div class="font-medium dark:text-gray-200 truncate">${device.ip || 'Unknown'} ${device.hostname ? '(' + device.hostname + ')' : ''}</div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        ${(device.risk_factors || []).slice(0, 3).map(f => `<span class="inline-block mr-2">&bull; ${f}</span>`).join('')}
+                    </div>
+                </div>
+                <div class="flex-shrink-0 ml-3">
+                    ${renderRiskBadge(device.score, device.grade)}
+                </div>
+            `;
+            container.appendChild(div);
+        });
+
+        showNotification(`Assessed ${risks.length} devices`, 'success');
+    } catch (error) {
+        container.innerHTML = '<div class="text-red-500">Risk assessment failed</div>';
+        console.error('Device risk analysis error:', error);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Assess Risks';
+    }
+}
+
+async function runPerformanceAnalysis() {
+    const btn = document.getElementById('btn-performance');
+    btn.disabled = true;
+    btn.textContent = 'Analyzing...';
+    const container = document.getElementById('performance-results');
+    container.innerHTML = '<div class="text-gray-500">Analyzing network performance...</div>';
+
+    try {
+        const response = await fetch('/api/analyze/performance', { method: 'POST' });
+        const data = await response.json();
+        container.innerHTML = '';
+
+        const recs = data.recommendations || [];
+        if (recs.length === 0) {
+            container.innerHTML = '<div class="text-green-600 flex items-center"><span class="mr-2">&#10003;</span> All devices performing well</div>';
+            return;
+        }
+
+        recs.forEach(rec => {
+            const div = document.createElement('div');
+            const colorMap = {
+                critical: 'border-l-4 border-red-500 bg-red-50 dark:bg-red-900/20',
+                warning: 'border-l-4 border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20',
+                info: 'border-l-4 border-blue-500 bg-blue-50 dark:bg-blue-900/20',
+            };
+            div.className = `p-3 rounded-lg mb-2 ${colorMap[rec.severity] || colorMap.info}`;
+            div.innerHTML = `
+                <div class="font-semibold text-sm dark:text-gray-200">${rec.description || ''}</div>
+                <div class="text-sm text-gray-600 dark:text-gray-400 mt-1">${rec.recommendation || ''}</div>
+            `;
+            container.appendChild(div);
+        });
+
+        showNotification(`Performance: ${recs.length} findings`, 'success');
+    } catch (error) {
+        container.innerHTML = '<div class="text-red-500">Performance analysis failed</div>';
+        console.error('Performance analysis error:', error);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Analyze Performance';
+    }
+}
+
+// Load trend analysis on page load
+(async function loadTrendAnalysis() {
+    try {
+        const data = await fetchJSON('/api/trends/events?days=7');
+        const container = document.getElementById('trend-analysis-results');
+        if (data && data.trend && data.trend.length > 0) {
+            container.innerHTML = `<div class="text-sm text-gray-600 dark:text-gray-400">${data.trend.length} data points over 7 days</div>`;
+            renderTrendChart('trend-chart-container', data.trend, { name: 'Events', color: '#8B5CF6', fill: true, yTitle: 'Count' });
+        } else {
+            container.innerHTML = '<div class="text-gray-500 dark:text-gray-400">No trend data available yet</div>';
+        }
+    } catch (e) {
+        document.getElementById('trend-analysis-results').innerHTML = '<div class="text-gray-500 dark:text-gray-400">Trend data unavailable</div>';
+    }
+})();
 </script>
 {% endblock %}
