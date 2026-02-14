@@ -379,11 +379,24 @@ class NetMonDash:
                         )
                         self.notifier.notify_new_device(dev.ip, dev.mac, None)
 
-                    # Upsert into database
+                    # Quick ping for baseline latency (non-blocking)
+                    loop = asyncio.get_running_loop()
+                    ping_data = await loop.run_in_executor(
+                        None,
+                        lambda ip=dev.ip: self.scanner.ping_host_detailed(
+                            ip, count=2, timeout=1
+                        ),
+                    )
+
+                    # Upsert into database with latency
                     self.db.add_or_update_device(
                         mac=dev.mac,
                         ip=dev.ip,
                         vendor=dev.vendor,
+                        latency_ms=ping_data.get("avg_ms"),
+                        jitter_ms=ping_data.get("jitter_ms"),
+                        packet_loss=ping_data.get("packet_loss"),
+                        ttl=ping_data.get("ttl"),
                     )
 
                     # Queue for deep nmap scan if nmap available
@@ -399,9 +412,12 @@ class NetMonDash:
                         "Device went offline: %s (%s)", dev.ip, dev.mac
                     )
                     self.notifier.notify_device_offline(dev.ip, None)
-                    # Mark offline in DB
-                    online_macs = self.discovery.registry.get_online_macs()
-                    self.db.mark_devices_offline(list(online_macs))
+                    # Mark offline in DB: pass currently-online MACs so that
+                    # any device NOT in this set gets marked offline.
+                    # The registry has already flipped this device to offline,
+                    # so get_online_macs() returns the correct remaining set.
+                    remaining_online = self.discovery.registry.get_online_macs()
+                    self.db.mark_devices_offline(list(remaining_online))
 
                 elif event_type == "device_ip_changed":
                     logger.info(

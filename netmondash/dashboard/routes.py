@@ -380,6 +380,62 @@ async def update_device_notes(request: Request, mac: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/api/devices/{mac}/scan")
+async def trigger_device_scan(request: Request, mac: str):
+    """Trigger a deep nmap scan for a single device.
+
+    Returns the updated device info after the scan completes.
+    """
+    db = _get_db(request)
+    scanner = _get_scanner(request)
+
+    device = db.get_device(mac)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    ip = device.get("ip") if isinstance(device, dict) else device.ip
+
+    try:
+        loop = asyncio.get_running_loop()
+        device_info = await loop.run_in_executor(
+            None,
+            lambda: scanner.deep_scan_device(ip),
+        )
+
+        if device_info is None:
+            return {
+                "success": False,
+                "message": f"Host {ip} is unreachable",
+                "mac": mac,
+            }
+
+        # Update database with full scan results
+        db.add_or_update_device(
+            mac=device_info.mac or mac,
+            ip=device_info.ip,
+            hostname=device_info.hostname,
+            vendor=device_info.vendor,
+            open_ports=device_info.open_ports,
+            services=device_info.services,
+            latency_ms=device_info.latency_ms,
+            os_guess=device_info.os_guess,
+            jitter_ms=device_info.jitter_ms,
+            packet_loss=device_info.packet_loss,
+            ttl=device_info.ttl,
+        )
+
+        return {
+            "success": True,
+            "message": f"Deep scan complete for {ip}",
+            "mac": mac,
+            "device": device_info.to_dict(),
+        }
+
+    except Exception as e:
+        logger.error(f"Error scanning device {mac}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── Scan API Endpoints ───────────────────────────────────────────────────────
 
 @router.get("/api/scans/recent")

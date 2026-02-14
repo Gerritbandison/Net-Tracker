@@ -17,7 +17,10 @@ from .database import (
     DeviceChange, UptimeRecord,
     DEVICE_CATEGORIES, guess_device_category,
 )
-from .notifier import Notifier
+from .notifier import (
+    Notifier, NotifierBackend, DesktopBackend,
+    WebhookBackend, EmailBackend,
+)
 from .discovery import (
     DiscoveryEngine, DeviceRegistry, DiscoveredDevice,
     ActiveARPScanner, PassiveARPListener, EventBatcher,
@@ -48,6 +51,10 @@ __all__ = [
     "DEVICE_CATEGORIES",
     "guess_device_category",
     "Notifier",
+    "NotifierBackend",
+    "DesktopBackend",
+    "WebhookBackend",
+    "EmailBackend",
     "DiscoveryEngine",
     "DeviceRegistry",
     "DiscoveredDevice",
