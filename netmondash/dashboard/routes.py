@@ -57,9 +57,9 @@ async def devices_page(request: Request):
     """Devices page."""
     templates = request.app.state.templates
     return templates.TemplateResponse(
+        request,
         "devices.html",
         {
-            "request": request,
             "page": "devices",
             "title": "NetMonDash - Devices",
         }
@@ -71,9 +71,9 @@ async def wifi_page(request: Request):
     """WiFi analysis page."""
     templates = request.app.state.templates
     return templates.TemplateResponse(
+        request,
         "wifi.html",
         {
-            "request": request,
             "page": "wifi",
             "title": "NetMonDash - WiFi Analysis",
         }
@@ -85,9 +85,9 @@ async def insights_page(request: Request):
     """AI insights page."""
     templates = request.app.state.templates
     return templates.TemplateResponse(
+        request,
         "insights.html",
         {
-            "request": request,
             "page": "insights",
             "title": "NetMonDash - AI Insights",
         }
@@ -99,9 +99,9 @@ async def settings_page(request: Request):
     """Settings page."""
     templates = request.app.state.templates
     return templates.TemplateResponse(
+        request,
         "settings.html",
         {
-            "request": request,
             "page": "settings",
             "title": "NetMonDash - Settings",
         }
@@ -722,8 +722,8 @@ async def get_categories(request: Request):
 @router.get("/api/export")
 async def export_data(
     request: Request,
-    format: str = Query("json", regex="^(json|csv)$", description="Export format"),
-    data_type: str = Query("devices", regex="^(devices|scans|alerts)$", description="Data type"),
+    format: str = Query("json", pattern="^(json|csv)$", description="Export format"),
+    data_type: str = Query("devices", pattern="^(devices|scans|alerts)$", description="Data type"),
 ):
     """Export data in various formats."""
     db = _get_db(request)

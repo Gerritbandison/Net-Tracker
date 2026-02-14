@@ -104,9 +104,9 @@ def create_app(
     async def root(request: Request):
         """Root page - overview dashboard."""
         return templates.TemplateResponse(
+            request,
             "index.html",
             {
-                "request": request,
                 "page": "overview",
                 "title": "NetMonDash - Overview",
                 "version": APP_VERSION,
