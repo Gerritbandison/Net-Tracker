@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-    <!-- Statistics Cards -->
+<!-- Statistics Cards - 6 cards -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6 mb-8">
     <div class="stat-card">
         <div class="stat-label">Total Devices</div>
         <div class="stat-value" id="total-devices">--</div>
@@ -25,6 +25,18 @@
         <div class="stat-label">Scans (24h)</div>
         <div class="stat-value text-blue-600" id="scan-count">--</div>
         <div class="stat-change" id="last-scan">Last: --</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">Security Score</div>
+        <div class="stat-value text-purple-600" id="security-score">--</div>
+        <div class="stat-change" id="security-status">Calculating...</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="stat-label">New Devices (24h)</div>
+        <div class="stat-value text-indigo-600" id="new-devices-24h">--</div>
+        <div class="stat-change text-gray-600">Recently discovered</div>
     </div>
 </div>
 
@@ -51,7 +63,7 @@
             </table>
         </div>
         <div class="mt-4">
-            <a href="/devices" class="text-blue-600 hover:text-blue-800">View all devices →</a>
+            <a href="/devices" class="text-blue-600 hover:text-blue-800">View all devices &rarr;</a>
         </div>
     </div>
 
@@ -62,24 +74,52 @@
             <div class="text-center text-gray-500">Loading alerts...</div>
         </div>
         <div class="mt-4">
-            <a href="/insights" class="text-blue-600 hover:text-blue-800">View all insights →</a>
+            <a href="/insights" class="text-blue-600 hover:text-blue-800">View all insights &rarr;</a>
         </div>
     </div>
 
-    <!-- Network Activity Chart -->
+    <!-- Device Category Pie Chart -->
+    <div class="card">
+        <h2 class="card-title">Device Categories</h2>
+        <div id="category-chart" style="height: 300px;">
+            <div class="flex items-center justify-center h-full text-gray-400">Loading chart...</div>
+        </div>
+    </div>
+
+    <!-- Top Vendors Bar Chart -->
+    <div class="card">
+        <h2 class="card-title">Top Vendors</h2>
+        <div id="vendors-chart" style="height: 300px;">
+            <div class="flex items-center justify-center h-full text-gray-400">Loading chart...</div>
+        </div>
+    </div>
+
+    <!-- Network Activity Chart (full width) -->
     <div class="card lg:col-span-2">
         <h2 class="card-title">Network Activity (24h)</h2>
         <div id="activity-chart" style="height: 300px;"></div>
     </div>
 </div>
 
+<!-- Network Timeline -->
+<div class="card mt-6">
+    <h2 class="card-title">Network Timeline</h2>
+    <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">Recent network events</p>
+    <div id="network-timeline" class="space-y-3 max-h-96 overflow-y-auto">
+        <div class="text-center text-gray-500">Loading timeline...</div>
+    </div>
+</div>
+
 <!-- Quick Actions -->
-<div class="mt-6 flex space-x-4">
+<div class="mt-6 flex flex-wrap gap-4">
     <button onclick="triggerScan()" class="btn-primary">
         Trigger Network Scan
     </button>
     <button onclick="exportData('devices', 'json')" class="btn-secondary">
         Export Data
+    </button>
+    <button onclick="runSecurityAnalysisFromOverview()" class="btn-secondary" style="background-color: #7C3AED;" onmouseover="this.style.backgroundColor='#6D28D9'" onmouseout="this.style.backgroundColor='#7C3AED'">
+        Run Security Analysis
     </button>
 </div>
 {% endblock %}
@@ -101,9 +141,41 @@ async function loadOverviewData() {
         document.getElementById('alert-count').textContent = stats.unacknowledged_alerts || 0;
         document.getElementById('scan-count').textContent = stats.scans_24h || 0;
 
+        // Security score
+        const secScore = stats.security_score !== undefined ? stats.security_score : '--';
+        const secScoreEl = document.getElementById('security-score');
+        secScoreEl.textContent = secScore;
+        if (typeof secScore === 'number') {
+            const statusEl = document.getElementById('security-status');
+            if (secScore >= 80) {
+                secScoreEl.className = 'stat-value text-green-600';
+                statusEl.textContent = 'Good';
+                statusEl.className = 'stat-change text-green-600';
+            } else if (secScore >= 60) {
+                secScoreEl.className = 'stat-value text-yellow-600';
+                statusEl.textContent = 'Fair';
+                statusEl.className = 'stat-change text-yellow-600';
+            } else {
+                secScoreEl.className = 'stat-value text-red-600';
+                statusEl.textContent = 'Needs Attention';
+                statusEl.className = 'stat-change text-red-600';
+            }
+        }
+
+        // New devices (24h)
+        const newDevices = stats.new_devices_24h !== undefined ? stats.new_devices_24h : 0;
+        document.getElementById('new-devices-24h').textContent = newDevices;
+
         if (stats.critical_alerts > 0) {
             document.getElementById('critical-alerts').textContent = `${stats.critical_alerts} critical`;
             document.getElementById('critical-alerts').classList.add('text-red-600');
+        } else {
+            document.getElementById('critical-alerts').textContent = 'No critical alerts';
+        }
+
+        if (stats.online_devices !== undefined && stats.total_devices) {
+            const pct = Math.round((stats.online_devices / stats.total_devices) * 100);
+            document.getElementById('online-change').textContent = `${pct}% of total`;
         }
 
         if (stats.last_scan) {
@@ -111,27 +183,46 @@ async function loadOverviewData() {
             document.getElementById('last-scan').textContent = `Last: ${formatTimeAgo(lastScan)}`;
         }
 
+        // Device categories pie chart
+        if (stats.categories) {
+            plotCategoryChart(stats.categories);
+        } else {
+            // Fallback: compute from devices
+            loadCategoryChart();
+        }
+
+        // Top vendors bar chart
+        if (stats.top_vendors) {
+            plotVendorsChart(stats.top_vendors);
+        } else {
+            loadVendorsChart();
+        }
+
         // Load recent devices
         const devicesResponse = await fetch('/api/devices?online_only=false');
         const devicesData = await devicesResponse.json();
-        const devices = devicesData.devices.slice(0, 5); // Top 5
+        const devices = devicesData.devices.slice(0, 5);
 
         const tbody = document.getElementById('recent-devices-body');
         tbody.innerHTML = '';
 
-        devices.forEach(device => {
-            const row = tbody.insertRow();
-            row.innerHTML = `
-                <td>${device.ip}</td>
-                <td>${device.hostname || 'Unknown'}</td>
-                <td>${device.vendor || 'Unknown'}</td>
-                <td>
-                    <span class="status-badge status-${device.is_online ? 'online' : 'offline'}">
-                        ${device.is_online ? 'Online' : 'Offline'}
-                    </span>
-                </td>
-            `;
-        });
+        if (devices.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-gray-500">No devices found</td></tr>';
+        } else {
+            devices.forEach(device => {
+                const row = tbody.insertRow();
+                row.innerHTML = `
+                    <td class="font-mono">${device.ip}</td>
+                    <td>${device.hostname || 'Unknown'}</td>
+                    <td>${device.vendor || 'Unknown'}</td>
+                    <td>
+                        <span class="status-badge status-${device.is_online ? 'online' : 'offline'}">
+                            ${device.is_online ? 'Online' : 'Offline'}
+                        </span>
+                    </td>
+                `;
+            });
+        }
 
         // Load recent alerts
         const alertsResponse = await fetch('/api/alerts?unacknowledged_only=true');
@@ -149,7 +240,7 @@ async function loadOverviewData() {
                 alertDiv.className = `alert alert-${alert.severity}`;
                 alertDiv.innerHTML = `
                     <div class="font-semibold">${alert.title}</div>
-                    <div class="text-sm">${alert.message.substring(0, 100)}...</div>
+                    <div class="text-sm">${alert.message.substring(0, 100)}${alert.message.length > 100 ? '...' : ''}</div>
                     <div class="text-xs text-gray-500 mt-1">${formatTimeAgo(new Date(alert.timestamp))}</div>
                 `;
                 alertsContainer.appendChild(alertDiv);
@@ -159,47 +250,284 @@ async function loadOverviewData() {
         // Load activity chart
         const scanHistoryResponse = await fetch('/api/scans/history?hours=24');
         const scanHistory = await scanHistoryResponse.json();
-
         plotActivityChart(scanHistory.scans);
+
+        // Load timeline
+        loadNetworkTimeline();
 
     } catch (error) {
         console.error('Error loading overview data:', error);
     }
 }
 
-function plotActivityChart(scans) {
-    const timestamps = scans.map(s => new Date(s.timestamp));
-    const deviceCounts = scans.map(s => s.device_count);
+function plotCategoryChart(categories) {
+    const labels = Object.keys(categories);
+    const values = Object.values(categories);
+
+    if (labels.length === 0) {
+        document.getElementById('category-chart').innerHTML = '<div class="flex items-center justify-center h-full text-gray-400">No category data available</div>';
+        return;
+    }
+
+    const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#84CC16'];
 
     const trace = {
+        labels: labels,
+        values: values,
+        type: 'pie',
+        hole: 0.4,
+        marker: {
+            colors: colors.slice(0, labels.length)
+        },
+        textinfo: 'label+percent',
+        textposition: 'outside',
+        automargin: true
+    };
+
+    const isDark = document.documentElement.classList.contains('dark');
+    const layout = {
+        margin: { t: 10, r: 10, b: 10, l: 10 },
+        showlegend: true,
+        legend: { orientation: 'h', y: -0.1, font: { color: isDark ? '#D1D5DB' : '#374151' } },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        font: { color: isDark ? '#D1D5DB' : '#374151' }
+    };
+
+    Plotly.newPlot('category-chart', [trace], layout, {responsive: true});
+}
+
+async function loadCategoryChart() {
+    try {
+        const response = await fetch('/api/devices?online_only=false');
+        const data = await response.json();
+        const categories = {};
+        data.devices.forEach(d => {
+            const cat = d.category || 'Unknown';
+            categories[cat] = (categories[cat] || 0) + 1;
+        });
+        plotCategoryChart(categories);
+    } catch (e) {
+        console.error('Error loading category chart:', e);
+    }
+}
+
+function plotVendorsChart(topVendors) {
+    // topVendors expected as array of {vendor, count} or object {vendor: count}
+    let vendorNames, vendorCounts;
+    if (Array.isArray(topVendors)) {
+        vendorNames = topVendors.map(v => v.vendor || v.name || 'Unknown');
+        vendorCounts = topVendors.map(v => v.count || v.value || 0);
+    } else {
+        vendorNames = Object.keys(topVendors);
+        vendorCounts = Object.values(topVendors);
+    }
+
+    if (vendorNames.length === 0) {
+        document.getElementById('vendors-chart').innerHTML = '<div class="flex items-center justify-center h-full text-gray-400">No vendor data available</div>';
+        return;
+    }
+
+    const isDark = document.documentElement.classList.contains('dark');
+
+    const trace = {
+        x: vendorCounts,
+        y: vendorNames,
+        type: 'bar',
+        orientation: 'h',
+        marker: {
+            color: '#3B82F6'
+        }
+    };
+
+    const layout = {
+        margin: { t: 10, r: 20, b: 40, l: 120 },
+        xaxis: {
+            title: 'Device Count',
+            color: isDark ? '#D1D5DB' : '#374151',
+            gridcolor: isDark ? '#374151' : '#E5E7EB'
+        },
+        yaxis: {
+            autorange: 'reversed',
+            color: isDark ? '#D1D5DB' : '#374151'
+        },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        font: { color: isDark ? '#D1D5DB' : '#374151' }
+    };
+
+    Plotly.newPlot('vendors-chart', [trace], layout, {responsive: true});
+}
+
+async function loadVendorsChart() {
+    try {
+        const response = await fetch('/api/devices?online_only=false');
+        const data = await response.json();
+        const vendors = {};
+        data.devices.forEach(d => {
+            const v = d.vendor || 'Unknown';
+            vendors[v] = (vendors[v] || 0) + 1;
+        });
+        // Sort and take top 8
+        const sorted = Object.entries(vendors).sort((a, b) => b[1] - a[1]).slice(0, 8);
+        const topVendors = {};
+        sorted.forEach(([name, count]) => { topVendors[name] = count; });
+        plotVendorsChart(topVendors);
+    } catch (e) {
+        console.error('Error loading vendors chart:', e);
+    }
+}
+
+function plotActivityChart(scans) {
+    if (!scans || scans.length === 0) {
+        document.getElementById('activity-chart').innerHTML = '<div class="flex items-center justify-center h-full text-gray-400">No scan data available</div>';
+        return;
+    }
+
+    const timestamps = scans.map(s => new Date(s.timestamp));
+    const deviceCounts = scans.map(s => s.device_count);
+    const onlineCounts = scans.map(s => s.online_count || s.device_count);
+
+    const isDark = document.documentElement.classList.contains('dark');
+
+    const traceTotal = {
         x: timestamps,
         y: deviceCounts,
         type: 'scatter',
         mode: 'lines+markers',
-        name: 'Devices',
-        line: {
-            color: '#3B82F6',
-            width: 2
-        },
-        marker: {
-            size: 6
-        }
+        name: 'Total Devices',
+        line: { color: '#3B82F6', width: 2 },
+        marker: { size: 5 },
+        fill: 'tozeroy',
+        fillcolor: 'rgba(59, 130, 246, 0.1)'
+    };
+
+    const traceOnline = {
+        x: timestamps,
+        y: onlineCounts,
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: 'Online',
+        line: { color: '#10B981', width: 2 },
+        marker: { size: 5 }
     };
 
     const layout = {
         xaxis: {
             title: 'Time',
-            type: 'date'
+            type: 'date',
+            color: isDark ? '#D1D5DB' : '#374151',
+            gridcolor: isDark ? '#374151' : '#E5E7EB'
         },
         yaxis: {
             title: 'Device Count',
-            rangemode: 'tozero'
+            rangemode: 'tozero',
+            color: isDark ? '#D1D5DB' : '#374151',
+            gridcolor: isDark ? '#374151' : '#E5E7EB'
         },
         margin: { t: 20, r: 20, b: 40, l: 50 },
-        hovermode: 'closest'
+        hovermode: 'closest',
+        legend: { orientation: 'h', y: 1.1, font: { color: isDark ? '#D1D5DB' : '#374151' } },
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: 'rgba(0,0,0,0)',
+        font: { color: isDark ? '#D1D5DB' : '#374151' }
     };
 
-    Plotly.newPlot('activity-chart', [trace], layout, {responsive: true});
+    Plotly.newPlot('activity-chart', [traceTotal, traceOnline], layout, {responsive: true});
+}
+
+async function loadNetworkTimeline() {
+    const container = document.getElementById('network-timeline');
+    try {
+        const response = await fetch('/api/events');
+        if (!response.ok) {
+            // Fallback: build timeline from alerts
+            await loadTimelineFromAlerts();
+            return;
+        }
+        const data = await response.json();
+        const events = data.events || data;
+
+        container.innerHTML = '';
+        if (!events || events.length === 0) {
+            container.innerHTML = '<div class="text-center text-gray-500">No recent events</div>';
+            return;
+        }
+
+        const displayEvents = Array.isArray(events) ? events.slice(0, 20) : [];
+        displayEvents.forEach(event => {
+            const eventDiv = document.createElement('div');
+            const typeColor = getEventTypeColor(event.type || event.event_type || 'info');
+            eventDiv.className = 'flex items-start space-x-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors';
+            eventDiv.innerHTML = `
+                <div class="flex-shrink-0 w-3 h-3 rounded-full mt-1.5 ${typeColor}"></div>
+                <div class="flex-1 min-w-0">
+                    <div class="font-medium text-sm dark:text-gray-200">${event.title || event.description || event.message || 'Event'}</div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                        ${event.source_ip ? event.source_ip + ' &bull; ' : ''}${event.timestamp ? formatTimeAgo(new Date(event.timestamp)) : ''}
+                    </div>
+                </div>
+                <div class="flex-shrink-0">
+                    <span class="text-xs px-2 py-0.5 rounded-full ${typeColor} bg-opacity-20 text-gray-700 dark:text-gray-300">${event.type || event.event_type || 'info'}</span>
+                </div>
+            `;
+            container.appendChild(eventDiv);
+        });
+    } catch (error) {
+        // Fallback to alerts-based timeline
+        await loadTimelineFromAlerts();
+    }
+}
+
+async function loadTimelineFromAlerts() {
+    const container = document.getElementById('network-timeline');
+    try {
+        const response = await fetch('/api/alerts?limit=10');
+        const data = await response.json();
+        const alerts = data.alerts || [];
+
+        container.innerHTML = '';
+        if (alerts.length === 0) {
+            container.innerHTML = '<div class="text-center text-gray-500">No recent events</div>';
+            return;
+        }
+
+        alerts.forEach(alert => {
+            const typeColor = getEventTypeColor(alert.severity || 'info');
+            const eventDiv = document.createElement('div');
+            eventDiv.className = 'flex items-start space-x-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors';
+            eventDiv.innerHTML = `
+                <div class="flex-shrink-0 w-3 h-3 rounded-full mt-1.5 ${typeColor}"></div>
+                <div class="flex-1 min-w-0">
+                    <div class="font-medium text-sm dark:text-gray-200">${alert.title}</div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                        ${alert.source_ip ? alert.source_ip + ' &bull; ' : ''}${formatTimeAgo(new Date(alert.timestamp))}
+                    </div>
+                </div>
+                <div class="flex-shrink-0">
+                    <span class="severity-badge severity-${alert.severity}">${alert.severity.toUpperCase()}</span>
+                </div>
+            `;
+            container.appendChild(eventDiv);
+        });
+    } catch (e) {
+        container.innerHTML = '<div class="text-center text-gray-500">Could not load timeline</div>';
+    }
+}
+
+function getEventTypeColor(type) {
+    const colors = {
+        'new_device': 'bg-blue-500',
+        'device_offline': 'bg-red-500',
+        'device_online': 'bg-green-500',
+        'scan': 'bg-indigo-500',
+        'alert': 'bg-yellow-500',
+        'critical': 'bg-red-600',
+        'warning': 'bg-yellow-500',
+        'info': 'bg-blue-500',
+        'success': 'bg-green-500',
+    };
+    return colors[type] || 'bg-gray-400';
 }
 
 async function triggerScan() {
@@ -209,10 +537,26 @@ async function triggerScan() {
 
         if (result.success) {
             showNotification('Scan triggered successfully', 'success');
+            // Reload after a short delay
+            setTimeout(() => loadOverviewData(), 3000);
         }
     } catch (error) {
         console.error('Error triggering scan:', error);
         showNotification('Failed to trigger scan', 'error');
+    }
+}
+
+async function runSecurityAnalysisFromOverview() {
+    try {
+        showNotification('Running security analysis...', 'info');
+        const response = await fetch('/api/analyze/security', { method: 'POST' });
+        const data = await response.json();
+        showNotification(`Security analysis complete: ${data.count} recommendations`, 'success');
+        // Reload stats to update security score
+        loadOverviewData();
+    } catch (error) {
+        console.error('Error running security analysis:', error);
+        showNotification('Security analysis failed. Check AI Insights page.', 'warning');
     }
 }
 </script>

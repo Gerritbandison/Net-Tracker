@@ -2,94 +2,116 @@
 
 {% block content %}
 <div class="mb-6">
-    <h1 class="text-3xl font-bold text-gray-800">Settings</h1>
-    <p class="text-gray-600 mt-2">Configure NetMonDash preferences</p>
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-800 dark:text-gray-100">Settings</h1>
+            <p class="text-gray-600 dark:text-gray-400 mt-2">Configure NetMonDash preferences</p>
+        </div>
+        <div class="mt-4 md:mt-0">
+            <button onclick="resetToDefaults()" class="btn-secondary text-sm">
+                Reset to Defaults
+            </button>
+        </div>
+    </div>
 </div>
 
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <!-- Network Settings -->
     <div class="card">
-        <h2 class="card-title">Network Settings</h2>
-        <div class="space-y-4">
+        <h2 class="card-title flex items-center">
+            <span class="mr-2">&#127760;</span> Network Settings
+        </h2>
+        <div class="space-y-4 mt-3">
             <div>
-                <label class="detail-label">Network Interface</label>
+                <label class="detail-label dark:text-gray-300">Network Interface</label>
                 <select id="interface-select" class="form-select w-full">
-                    <option>Auto-detect</option>
-                    <option>wlan0</option>
-                    <option>eth0</option>
+                    <option value="auto">Auto-detect</option>
                 </select>
-                <p class="text-xs text-gray-500 mt-1">Select the network interface to use for scanning</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Select the network interface to use for scanning</p>
             </div>
 
             <div>
-                <label class="detail-label">Scan Interval (seconds)</label>
+                <label class="detail-label dark:text-gray-300">Scan Interval (seconds)</label>
                 <input type="number" id="scan-interval" class="form-input w-full" value="30" min="10" max="300">
-                <p class="text-xs text-gray-500 mt-1">How often to scan the network automatically</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">How often to scan the network automatically (10-300)</p>
             </div>
 
             <div>
                 <label class="inline-flex items-center">
                     <input type="checkbox" id="service-detection" class="form-checkbox">
-                    <span class="ml-2">Enable service detection (slower scans)</span>
+                    <span class="ml-2 dark:text-gray-300">Enable service detection (slower scans)</span>
                 </label>
+                <p class="text-xs text-gray-500 dark:text-gray-400 ml-6">Uses nmap -sV to identify running services</p>
             </div>
         </div>
     </div>
 
     <!-- AI Settings -->
     <div class="card">
-        <h2 class="card-title">AI Settings</h2>
-        <div class="space-y-4">
+        <h2 class="card-title flex items-center">
+            <span class="mr-2">&#129302;</span> AI Settings
+        </h2>
+        <div class="space-y-4 mt-3">
             <div>
                 <label class="inline-flex items-center">
                     <input type="checkbox" id="enable-ai" class="form-checkbox" checked>
-                    <span class="ml-2">Enable AI analysis</span>
+                    <span class="ml-2 dark:text-gray-300">Enable AI analysis</span>
                 </label>
+                <p class="text-xs text-gray-500 dark:text-gray-400 ml-6">Falls back to rule-based analysis when Ollama is unavailable</p>
             </div>
 
             <div>
-                <label class="detail-label">Ollama API URL</label>
+                <label class="detail-label dark:text-gray-300">Ollama API URL</label>
                 <input type="text" id="ollama-url" class="form-input w-full" value="http://localhost:11434">
-                <p class="text-xs text-gray-500 mt-1">Ollama API endpoint</p>
             </div>
 
             <div>
-                <label class="detail-label">Model</label>
+                <label class="detail-label dark:text-gray-300">Model</label>
                 <input type="text" id="ollama-model" class="form-input w-full" value="llama3.1:8b">
-                <p class="text-xs text-gray-500 mt-1">Ollama model to use for analysis</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Ollama model for analysis</p>
             </div>
 
-            <div>
+            <div class="flex items-center space-x-3">
                 <button onclick="testOllamaConnection()" class="btn-secondary">
                     Test Connection
                 </button>
-                <span id="ollama-status" class="ml-3 text-sm"></span>
+                <span id="ollama-status" class="text-sm"></span>
             </div>
         </div>
     </div>
 
     <!-- Notification Settings -->
     <div class="card">
-        <h2 class="card-title">Notifications</h2>
-        <div class="space-y-3">
+        <h2 class="card-title flex items-center">
+            <span class="mr-2">&#128276;</span> Notifications
+        </h2>
+        <div class="space-y-3 mt-3">
             <label class="inline-flex items-center">
                 <input type="checkbox" id="notify-new-device" class="form-checkbox" checked>
-                <span class="ml-2">Notify on new device detection</span>
+                <span class="ml-2 dark:text-gray-300">Notify on new device detection</span>
             </label>
 
             <label class="inline-flex items-center">
                 <input type="checkbox" id="notify-critical" class="form-checkbox" checked>
-                <span class="ml-2">Notify on critical alerts</span>
+                <span class="ml-2 dark:text-gray-300">Notify on critical alerts</span>
             </label>
 
             <label class="inline-flex items-center">
                 <input type="checkbox" id="notify-wifi" class="form-checkbox">
-                <span class="ml-2">Notify on WiFi signal issues</span>
+                <span class="ml-2 dark:text-gray-300">Notify on WiFi signal issues</span>
             </label>
 
-            <div class="mt-4">
+            <label class="inline-flex items-center">
+                <input type="checkbox" id="notify-desktop" class="form-checkbox" checked>
+                <span class="ml-2 dark:text-gray-300">Enable desktop notifications (requires notify-send)</span>
+            </label>
+
+            <div class="mt-4 flex space-x-3">
                 <button onclick="testNotification()" class="btn-secondary">
                     Test Notification
+                </button>
+                <button onclick="requestBrowserNotifications()" class="btn-secondary">
+                    Enable Browser Notifications
                 </button>
             </div>
         </div>
@@ -97,16 +119,17 @@
 
     <!-- Display Settings -->
     <div class="card">
-        <h2 class="card-title">Display Settings</h2>
-        <div class="space-y-4">
+        <h2 class="card-title flex items-center">
+            <span class="mr-2">&#127912;</span> Display Settings
+        </h2>
+        <div class="space-y-4 mt-3">
             <div>
-                <label class="detail-label">Auto-refresh interval (seconds)</label>
+                <label class="detail-label dark:text-gray-300">Auto-refresh interval (seconds)</label>
                 <input type="number" id="refresh-interval" class="form-input w-full" value="30" min="5" max="300">
-                <p class="text-xs text-gray-500 mt-1">Dashboard auto-refresh interval</p>
             </div>
 
             <div>
-                <label class="detail-label">Items per page</label>
+                <label class="detail-label dark:text-gray-300">Items per page</label>
                 <select id="items-per-page" class="form-select w-full">
                     <option value="25">25</option>
                     <option value="50" selected>50</option>
@@ -115,67 +138,144 @@
                 </select>
             </div>
 
+            <div>
+                <label class="detail-label dark:text-gray-300">Theme</label>
+                <div class="flex items-center space-x-4 mt-1">
+                    <label class="inline-flex items-center">
+                        <input type="radio" name="theme" value="light" class="form-radio" id="theme-light">
+                        <span class="ml-2 dark:text-gray-300">Light</span>
+                    </label>
+                    <label class="inline-flex items-center">
+                        <input type="radio" name="theme" value="dark" class="form-radio" id="theme-dark">
+                        <span class="ml-2 dark:text-gray-300">Dark</span>
+                    </label>
+                    <label class="inline-flex items-center">
+                        <input type="radio" name="theme" value="system" class="form-radio" id="theme-system" checked>
+                        <span class="ml-2 dark:text-gray-300">System</span>
+                    </label>
+                </div>
+            </div>
+
             <label class="inline-flex items-center">
-                <input type="checkbox" id="dark-mode" class="form-checkbox">
-                <span class="ml-2">Dark mode (coming soon)</span>
+                <input type="checkbox" id="show-offline-devices" class="form-checkbox" checked>
+                <span class="ml-2 dark:text-gray-300">Show offline devices by default</span>
             </label>
         </div>
     </div>
 
     <!-- Advanced Settings -->
     <div class="card">
-        <h2 class="card-title">Advanced Settings</h2>
-        <div class="space-y-4">
+        <h2 class="card-title flex items-center">
+            <span class="mr-2">&#9881;</span> Advanced Settings
+        </h2>
+        <div class="space-y-4 mt-3">
             <div>
-                <label class="detail-label">Signal strength alert threshold (dBm)</label>
+                <label class="detail-label dark:text-gray-300">Signal strength alert threshold (dBm)</label>
                 <input type="number" id="signal-threshold" class="form-input w-full" value="-70" min="-100" max="-30">
-                <p class="text-xs text-gray-500 mt-1">Alert when WiFi signal drops below this level</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Alert when WiFi signal drops below this level</p>
             </div>
 
             <div>
-                <label class="detail-label">Device offline timeout (seconds)</label>
+                <label class="detail-label dark:text-gray-300">Device offline timeout (seconds)</label>
                 <input type="number" id="offline-timeout" class="form-input w-full" value="300" min="60" max="3600">
-                <p class="text-xs text-gray-500 mt-1">Mark device as offline after this period</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Mark device as offline after this period</p>
             </div>
 
             <div>
-                <label class="detail-label">Data retention (days)</label>
+                <label class="detail-label dark:text-gray-300">Data retention (days)</label>
                 <input type="number" id="retention-days" class="form-input w-full" value="30" min="1" max="365">
-                <p class="text-xs text-gray-500 mt-1">How long to keep historical data</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">How long to keep historical data</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Database Management -->
+    <div class="card">
+        <h2 class="card-title flex items-center">
+            <span class="mr-2">&#128451;</span> Database Management
+        </h2>
+        <div class="space-y-4 mt-3">
+            <div id="db-info" class="space-y-2">
+                <div class="text-sm text-gray-500 dark:text-gray-400">Loading database info...</div>
+            </div>
+
+            <hr class="border-gray-200 dark:border-gray-700">
+
+            <div class="flex flex-wrap gap-3">
+                <button onclick="cleanupDatabase()" class="btn-secondary">
+                    Cleanup Old Data
+                </button>
+                <button onclick="exportAllData('json')" class="btn-secondary">
+                    Export JSON
+                </button>
+                <button onclick="exportAllData('csv')" class="btn-secondary">
+                    Export CSV
+                </button>
+            </div>
+            <div id="db-status" class="text-sm hidden"></div>
+        </div>
+    </div>
+
+    <!-- Keyboard Shortcuts -->
+    <div class="card">
+        <h2 class="card-title flex items-center">
+            <span class="mr-2">&#9000;</span> Keyboard Shortcuts
+        </h2>
+        <div class="space-y-2 mt-3">
+            <div class="flex justify-between text-sm">
+                <span class="text-gray-600 dark:text-gray-400"><kbd class="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded text-xs">R</kbd></span>
+                <span class="text-gray-700 dark:text-gray-300">Refresh data</span>
+            </div>
+            <div class="flex justify-between text-sm">
+                <span class="text-gray-600 dark:text-gray-400"><kbd class="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded text-xs">D</kbd></span>
+                <span class="text-gray-700 dark:text-gray-300">Toggle dark mode</span>
+            </div>
+            <div class="flex justify-between text-sm">
+                <span class="text-gray-600 dark:text-gray-400"><kbd class="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded text-xs">/</kbd></span>
+                <span class="text-gray-700 dark:text-gray-300">Focus search</span>
+            </div>
+            <div class="flex justify-between text-sm">
+                <span class="text-gray-600 dark:text-gray-400"><kbd class="px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded text-xs">Esc</kbd></span>
+                <span class="text-gray-700 dark:text-gray-300">Close modal / clear search</span>
             </div>
         </div>
     </div>
 
     <!-- About -->
     <div class="card">
-        <h2 class="card-title">About NetMonDash</h2>
-        <div class="space-y-3">
-            <div>
-                <label class="detail-label">Version</label>
-                <div class="detail-value">1.0.0</div>
+        <h2 class="card-title flex items-center">
+            <span class="mr-2">&#8505;</span> About NetMonDash
+        </h2>
+        <div class="space-y-3 mt-3">
+            <div class="flex justify-between">
+                <label class="detail-label dark:text-gray-400">Version</label>
+                <div class="detail-value dark:text-gray-200" id="app-version">{{ version|default('2.0.0') }}</div>
             </div>
 
-            <div>
-                <label class="detail-label">Python Version</label>
-                <div class="detail-value" id="python-version">--</div>
+            <div class="flex justify-between">
+                <label class="detail-label dark:text-gray-400">Python Version</label>
+                <div class="detail-value dark:text-gray-200" id="python-version">--</div>
             </div>
 
-            <div>
-                <label class="detail-label">Database</label>
-                <div class="detail-value">SQLite</div>
+            <div class="flex justify-between">
+                <label class="detail-label dark:text-gray-400">Database</label>
+                <div class="detail-value dark:text-gray-200">SQLite (SQLAlchemy ORM)</div>
             </div>
 
-            <div class="mt-4">
-                <a href="https://github.com/yourusername/netmondash" target="_blank" class="text-blue-600 hover:text-blue-800">
-                    View on GitHub →
-                </a>
+            <div class="flex justify-between">
+                <label class="detail-label dark:text-gray-400">Server Status</label>
+                <div class="detail-value" id="server-status">
+                    <span class="px-2 py-0.5 rounded text-xs font-semibold bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">Running</span>
+                </div>
             </div>
 
-            <div class="mt-4">
-                <button onclick="exportSettings()" class="btn-secondary">
+            <hr class="border-gray-200 dark:border-gray-700">
+
+            <div class="flex flex-wrap gap-3">
+                <button onclick="exportSettings()" class="btn-secondary text-sm">
                     Export Settings
                 </button>
-                <button onclick="importSettings()" class="btn-secondary ml-2">
+                <button onclick="importSettings()" class="btn-secondary text-sm">
                     Import Settings
                 </button>
             </div>
@@ -183,44 +283,135 @@
     </div>
 </div>
 
-<!-- Save Button -->
-<div class="fixed bottom-6 right-6">
-    <button onclick="saveSettings()" class="btn-primary shadow-lg">
+<!-- Save Button (floating) -->
+<div class="fixed bottom-6 right-6 flex space-x-3 z-50">
+    <button onclick="saveSettings()" class="btn-primary shadow-lg px-6 py-3 text-base" id="save-btn">
         Save Settings
     </button>
 </div>
 {% endblock %}
 
+{% block page_init %}
+loadSettings();
+loadServerSettings();
+loadDatabaseInfo();
+{% endblock %}
+
 {% block extra_scripts %}
 <script>
-async function testOllamaConnection() {
-    const statusSpan = document.getElementById('ollama-status');
-    statusSpan.textContent = 'Testing...';
-    statusSpan.className = 'ml-3 text-sm text-gray-500';
-
+async function loadServerSettings() {
     try {
-        const url = document.getElementById('ollama-url').value;
-        const response = await fetch(`${url}/api/tags`, { timeout: 5000 });
+        const response = await fetch('/api/settings/current');
+        if (!response.ok) return;
+        const data = await response.json();
 
-        if (response.ok) {
-            statusSpan.textContent = '✓ Connected';
-            statusSpan.className = 'ml-3 text-sm text-green-600';
-        } else {
-            statusSpan.textContent = '✗ Connection failed';
-            statusSpan.className = 'ml-3 text-sm text-red-600';
-        }
+        if (data.scan_interval) document.getElementById('scan-interval').value = data.scan_interval;
+        if (data.ai_enabled !== undefined) document.getElementById('enable-ai').checked = data.ai_enabled;
+        if (data.ollama_url) document.getElementById('ollama-url').value = data.ollama_url;
+        if (data.ollama_model) document.getElementById('ollama-model').value = data.ollama_model;
+        if (data.retention_days) document.getElementById('retention-days').value = data.retention_days;
+
+        const select = document.getElementById('interface-select');
+        const opt = document.createElement('option');
+        opt.value = 'wlan0';
+        opt.textContent = 'wlan0';
+        select.appendChild(opt);
+        const opt2 = document.createElement('option');
+        opt2.value = 'eth0';
+        opt2.textContent = 'eth0';
+        select.appendChild(opt2);
     } catch (error) {
-        statusSpan.textContent = '✗ Cannot connect';
-        statusSpan.className = 'ml-3 text-sm text-red-600';
+        console.error('Error loading server settings:', error);
     }
 }
 
-async function testNotification() {
-    showNotification('This is a test notification from NetMonDash', 'info');
+async function loadDatabaseInfo() {
+    try {
+        const response = await fetch('/api/database/info');
+        if (!response.ok) return;
+        const data = await response.json();
+
+        const container = document.getElementById('db-info');
+        container.innerHTML = '';
+
+        const tables = data.tables || {};
+        const entries = Object.entries(tables);
+
+        entries.forEach(([table, count]) => {
+            const div = document.createElement('div');
+            div.className = 'flex justify-between text-sm';
+            div.innerHTML = `
+                <span class="text-gray-600 dark:text-gray-400 capitalize">${table}</span>
+                <span class="font-semibold text-gray-700 dark:text-gray-300">${count.toLocaleString()} records</span>
+            `;
+            container.appendChild(div);
+        });
+
+        const totalDiv = document.createElement('div');
+        totalDiv.className = 'flex justify-between text-sm font-semibold pt-2 border-t border-gray-200 dark:border-gray-700';
+        totalDiv.innerHTML = `
+            <span class="text-gray-700 dark:text-gray-300">Total</span>
+            <span class="text-gray-800 dark:text-gray-200">${(data.total_records || 0).toLocaleString()} records</span>
+        `;
+        container.appendChild(totalDiv);
+    } catch (error) {
+        console.error('Error loading database info:', error);
+    }
+}
+
+async function testOllamaConnection() {
+    const statusSpan = document.getElementById('ollama-status');
+    statusSpan.textContent = 'Testing...';
+    statusSpan.className = 'text-sm text-gray-500 dark:text-gray-400';
+
+    try {
+        const url = document.getElementById('ollama-url').value;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+
+        const response = await fetch(`${url}/api/tags`, { signal: controller.signal });
+        clearTimeout(timeout);
+
+        if (response.ok) {
+            const data = await response.json();
+            const modelCount = data.models ? data.models.length : 0;
+            statusSpan.textContent = `Connected (${modelCount} model${modelCount !== 1 ? 's' : ''})`;
+            statusSpan.className = 'text-sm text-green-600 dark:text-green-400 font-semibold';
+        } else {
+            statusSpan.textContent = 'Connection failed (status ' + response.status + ')';
+            statusSpan.className = 'text-sm text-red-600 dark:text-red-400';
+        }
+    } catch (error) {
+        statusSpan.textContent = 'Cannot connect';
+        statusSpan.className = 'text-sm text-red-600 dark:text-red-400';
+    }
+}
+
+function testNotification() {
+    if (typeof showToast === 'function') {
+        showToast('This is a test notification from NetMonDash', 'info');
+    } else if (typeof showNotification === 'function') {
+        showNotification('This is a test notification from NetMonDash', 'info');
+    }
+}
+
+function requestBrowserNotifications() {
+    if (!('Notification' in window)) {
+        if (typeof showToast === 'function') showToast('Browser notifications not supported', 'error');
+        return;
+    }
+
+    Notification.requestPermission().then(permission => {
+        if (permission === 'granted') {
+            new Notification('NetMonDash', { body: 'Browser notifications enabled!' });
+            if (typeof showToast === 'function') showToast('Browser notifications enabled', 'success');
+        } else {
+            if (typeof showToast === 'function') showToast('Notification permission denied', 'warning');
+        }
+    });
 }
 
 function saveSettings() {
-    // Collect all settings
     const settings = {
         scan_interval: document.getElementById('scan-interval').value,
         service_detection: document.getElementById('service-detection').checked,
@@ -230,17 +421,31 @@ function saveSettings() {
         notify_new_device: document.getElementById('notify-new-device').checked,
         notify_critical: document.getElementById('notify-critical').checked,
         notify_wifi: document.getElementById('notify-wifi').checked,
+        notify_desktop: document.getElementById('notify-desktop').checked,
         refresh_interval: document.getElementById('refresh-interval').value,
         items_per_page: document.getElementById('items-per-page').value,
         signal_threshold: document.getElementById('signal-threshold').value,
         offline_timeout: document.getElementById('offline-timeout').value,
         retention_days: document.getElementById('retention-days').value,
+        show_offline_devices: document.getElementById('show-offline-devices').checked,
+        theme: document.querySelector('input[name="theme"]:checked')?.value || 'system',
+        interface: document.getElementById('interface-select').value,
     };
 
-    // Save to localStorage
     localStorage.setItem('netmondash_settings', JSON.stringify(settings));
 
-    showNotification('Settings saved successfully', 'success');
+    applyTheme(settings.theme);
+
+    const btn = document.getElementById('save-btn');
+    btn.textContent = 'Saved!';
+    btn.classList.add('bg-green-600');
+    setTimeout(() => {
+        btn.textContent = 'Save Settings';
+        btn.classList.remove('bg-green-600');
+    }, 2000);
+
+    if (typeof showToast === 'function') showToast('Settings saved successfully', 'success');
+    else if (typeof showNotification === 'function') showNotification('Settings saved successfully', 'success');
 }
 
 function loadSettings() {
@@ -259,15 +464,103 @@ function loadSettings() {
         if (settings.notify_new_device !== undefined) document.getElementById('notify-new-device').checked = settings.notify_new_device;
         if (settings.notify_critical !== undefined) document.getElementById('notify-critical').checked = settings.notify_critical;
         if (settings.notify_wifi !== undefined) document.getElementById('notify-wifi').checked = settings.notify_wifi;
+        if (settings.notify_desktop !== undefined) document.getElementById('notify-desktop').checked = settings.notify_desktop;
         if (settings.refresh_interval) document.getElementById('refresh-interval').value = settings.refresh_interval;
         if (settings.items_per_page) document.getElementById('items-per-page').value = settings.items_per_page;
         if (settings.signal_threshold) document.getElementById('signal-threshold').value = settings.signal_threshold;
         if (settings.offline_timeout) document.getElementById('offline-timeout').value = settings.offline_timeout;
         if (settings.retention_days) document.getElementById('retention-days').value = settings.retention_days;
+        if (settings.show_offline_devices !== undefined) document.getElementById('show-offline-devices').checked = settings.show_offline_devices;
 
+        if (settings.theme) {
+            const radio = document.getElementById(`theme-${settings.theme}`);
+            if (radio) radio.checked = true;
+        }
+
+        if (settings.interface) {
+            document.getElementById('interface-select').value = settings.interface;
+        }
     } catch (error) {
         console.error('Error loading settings:', error);
     }
+}
+
+function applyTheme(theme) {
+    if (theme === 'dark') {
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('netmondash_dark_mode', 'true');
+    } else if (theme === 'light') {
+        document.documentElement.classList.remove('dark');
+        localStorage.setItem('netmondash_dark_mode', 'false');
+    } else {
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (prefersDark) {
+            document.documentElement.classList.add('dark');
+        } else {
+            document.documentElement.classList.remove('dark');
+        }
+        localStorage.removeItem('netmondash_dark_mode');
+    }
+    if (typeof updateDarkModeIcon === 'function') {
+        updateDarkModeIcon(document.documentElement.classList.contains('dark'));
+    }
+}
+
+function resetToDefaults() {
+    if (!confirm('Reset all settings to defaults? This cannot be undone.')) return;
+
+    localStorage.removeItem('netmondash_settings');
+
+    document.getElementById('scan-interval').value = 30;
+    document.getElementById('service-detection').checked = false;
+    document.getElementById('enable-ai').checked = true;
+    document.getElementById('ollama-url').value = 'http://localhost:11434';
+    document.getElementById('ollama-model').value = 'llama3.1:8b';
+    document.getElementById('notify-new-device').checked = true;
+    document.getElementById('notify-critical').checked = true;
+    document.getElementById('notify-wifi').checked = false;
+    document.getElementById('notify-desktop').checked = true;
+    document.getElementById('refresh-interval').value = 30;
+    document.getElementById('items-per-page').value = '50';
+    document.getElementById('signal-threshold').value = -70;
+    document.getElementById('offline-timeout').value = 300;
+    document.getElementById('retention-days').value = 30;
+    document.getElementById('show-offline-devices').checked = true;
+    document.getElementById('theme-system').checked = true;
+    document.getElementById('interface-select').value = 'auto';
+
+    applyTheme('system');
+
+    if (typeof showToast === 'function') showToast('Settings reset to defaults', 'info');
+}
+
+async function cleanupDatabase() {
+    const days = document.getElementById('retention-days').value || 30;
+
+    if (!confirm(`Delete all data older than ${days} days? This cannot be undone.`)) return;
+
+    const statusDiv = document.getElementById('db-status');
+    statusDiv.classList.remove('hidden');
+    statusDiv.className = 'text-sm mt-3 p-2 rounded bg-blue-50 text-blue-700 dark:bg-blue-900 dark:text-blue-200';
+    statusDiv.textContent = 'Cleaning up...';
+
+    try {
+        const response = await fetch(`/api/database/cleanup?days=${days}`, { method: 'POST' });
+        const data = await response.json();
+
+        statusDiv.className = 'text-sm mt-3 p-2 rounded bg-green-50 text-green-700 dark:bg-green-900 dark:text-green-200';
+        statusDiv.textContent = data.message || `Cleaned up ${data.total_deleted} records`;
+
+        loadDatabaseInfo();
+        setTimeout(() => statusDiv.classList.add('hidden'), 5000);
+    } catch (error) {
+        statusDiv.className = 'text-sm mt-3 p-2 rounded bg-red-50 text-red-700 dark:bg-red-900 dark:text-red-200';
+        statusDiv.textContent = 'Cleanup failed';
+    }
+}
+
+function exportAllData(format) {
+    window.open(`/api/export?format=${format}&data_type=devices`, '_blank');
 }
 
 function exportSettings() {
@@ -277,11 +570,11 @@ function exportSettings() {
 
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'netmondash_settings.json';
+    a.download = `netmondash_settings_${new Date().toISOString().split('T')[0]}.json`;
     a.click();
 
     URL.revokeObjectURL(url);
-    showNotification('Settings exported', 'success');
+    if (typeof showToast === 'function') showToast('Settings exported', 'success');
 }
 
 function importSettings() {
@@ -291,26 +584,29 @@ function importSettings() {
 
     input.onchange = (e) => {
         const file = e.target.files[0];
-        const reader = new FileReader();
+        if (!file) return;
 
+        const reader = new FileReader();
         reader.onload = (event) => {
             try {
                 const settings = JSON.parse(event.target.result);
                 localStorage.setItem('netmondash_settings', JSON.stringify(settings));
                 loadSettings();
-                showNotification('Settings imported successfully', 'success');
+                if (typeof showToast === 'function') showToast('Settings imported successfully', 'success');
             } catch (error) {
-                showNotification('Invalid settings file', 'error');
+                if (typeof showToast === 'function') showToast('Invalid settings file', 'error');
             }
         };
-
         reader.readAsText(file);
     };
 
     input.click();
 }
 
-// Load settings on page load
-document.addEventListener('DOMContentLoaded', loadSettings);
+document.querySelectorAll('input[name="theme"]').forEach(radio => {
+    radio.addEventListener('change', (e) => {
+        applyTheme(e.target.value);
+    });
+});
 </script>
 {% endblock %}

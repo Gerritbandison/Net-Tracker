@@ -7,6 +7,11 @@
 
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+        }
+    </script>
 
     <!-- Plotly.js for charts -->
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
@@ -14,19 +19,76 @@
     <!-- Custom CSS -->
     <link rel="stylesheet" href="/static/css/style.css">
 
+    <style>
+        /* Dark mode transitions */
+        html.dark body { background-color: #111827; color: #F9FAFB; }
+        html.dark .card, html.dark .stat-card { background-color: #1F2937; color: #F9FAFB; }
+        html.dark .card-title { color: #F9FAFB; }
+        html.dark .stat-value { color: #F9FAFB; }
+        html.dark .stat-label { color: #9CA3AF; }
+        html.dark .stat-change { color: #9CA3AF; }
+        html.dark .data-table thead th { background-color: #374151; color: #D1D5DB; border-color: #4B5563; }
+        html.dark .data-table tbody td { color: #D1D5DB; border-color: #374151; }
+        html.dark .data-table tbody tr:hover { background-color: #374151; }
+        html.dark .form-input, html.dark .form-select, html.dark .form-textarea { background-color: #374151; color: #F9FAFB; border-color: #4B5563; }
+        html.dark .modal-content { background-color: #1F2937; }
+        html.dark .modal-header, html.dark .modal-footer { border-color: #374151; }
+        html.dark .detail-label { color: #9CA3AF; }
+        html.dark .detail-value { color: #F9FAFB; }
+        html.dark .network-item { border-color: #374151; }
+        html.dark .network-item:hover { background-color: #374151; }
+        html.dark .band-card { background-color: #1F2937; border-color: #374151; }
+        html.dark .insight-item { background-color: #1E3A5F; }
+        html.dark .recommendation-card { background-color: #1F2937; }
+
+        /* Toast notification container */
+        #toast-container {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            max-width: 24rem;
+        }
+        #toast-container .toast {
+            animation: slideInRight 0.3s ease-out;
+        }
+        @keyframes slideInRight {
+            from { opacity: 0; transform: translateX(100%); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        /* Mobile nav transition */
+        #mobile-nav {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+        #mobile-nav.open {
+            max-height: 500px;
+        }
+    </style>
+
     {% block extra_head %}{% endblock %}
 </head>
-<body class="bg-gray-100 min-h-screen">
+<body class="bg-gray-100 min-h-screen dark:bg-gray-900 transition-colors duration-200">
+    <!-- Toast Notification Container -->
+    <div id="toast-container"></div>
+
     <!-- Navigation -->
-    <nav class="bg-blue-600 text-white shadow-lg">
+    <nav class="bg-blue-600 dark:bg-gray-800 text-white shadow-lg">
         <div class="container mx-auto px-4">
             <div class="flex items-center justify-between h-16">
+                <!-- Brand -->
                 <div class="flex items-center">
                     <h1 class="text-2xl font-bold">NetMonDash</h1>
-                    <span class="ml-4 text-sm text-blue-200">AI-Powered Network Monitor</span>
+                    <span class="ml-4 text-sm text-blue-200 dark:text-gray-400 hidden sm:inline">AI-Powered Network Monitor</span>
                 </div>
 
-                <div class="flex space-x-4">
+                <!-- Desktop Navigation Links -->
+                <div class="hidden md:flex space-x-4">
                     <a href="/" class="nav-link {% if page == 'overview' %}active{% endif %}">
                         Overview
                     </a>
@@ -44,15 +106,59 @@
                     </a>
                 </div>
 
-                <div class="flex items-center space-x-4">
-                    <div id="connection-status" class="flex items-center">
+                <!-- Right side controls -->
+                <div class="flex items-center space-x-3">
+                    <!-- Connection Status -->
+                    <div id="connection-status" class="hidden sm:flex items-center">
                         <div class="h-3 w-3 rounded-full bg-gray-400" id="status-indicator"></div>
                         <span class="ml-2 text-sm" id="status-text">Connecting...</span>
                     </div>
-                    <button id="refresh-btn" class="btn-secondary" onclick="refreshData()">
+
+                    <!-- Dark Mode Toggle -->
+                    <button id="dark-mode-toggle" onclick="toggleDarkMode()" class="p-2 rounded-lg hover:bg-blue-700 dark:hover:bg-gray-700 transition-colors" title="Toggle dark mode">
+                        <span id="dark-mode-icon-moon" class="text-lg">&#9790;</span>
+                        <span id="dark-mode-icon-sun" class="text-lg hidden">&#9788;</span>
+                    </button>
+
+                    <!-- Refresh Button -->
+                    <button id="refresh-btn" class="btn-secondary hidden sm:inline-block" onclick="refreshData()">
                         Refresh
                     </button>
+
+                    <!-- Mobile Hamburger Menu -->
+                    <button id="hamburger-btn" onclick="toggleMobileNav()" class="md:hidden p-2 rounded-lg hover:bg-blue-700 dark:hover:bg-gray-700 transition-colors">
+                        <span id="hamburger-icon" class="text-xl">&#9776;</span>
+                        <span id="hamburger-close" class="text-xl hidden">&#10005;</span>
+                    </button>
                 </div>
+            </div>
+        </div>
+
+        <!-- Mobile Navigation Menu -->
+        <div id="mobile-nav" class="md:hidden bg-blue-700 dark:bg-gray-700">
+            <div class="container mx-auto px-4 py-2 space-y-1">
+                <a href="/" class="block nav-link {% if page == 'overview' %}active{% endif %} py-3">
+                    Overview
+                </a>
+                <a href="/devices" class="block nav-link {% if page == 'devices' %}active{% endif %} py-3">
+                    Devices
+                </a>
+                <a href="/wifi" class="block nav-link {% if page == 'wifi' %}active{% endif %} py-3">
+                    WiFi
+                </a>
+                <a href="/insights" class="block nav-link {% if page == 'insights' %}active{% endif %} py-3">
+                    AI Insights
+                </a>
+                <a href="/settings" class="block nav-link {% if page == 'settings' %}active{% endif %} py-3">
+                    Settings
+                </a>
+                <div class="flex items-center py-3 border-t border-blue-600 dark:border-gray-600 mt-2">
+                    <div class="h-3 w-3 rounded-full bg-gray-400" id="status-indicator-mobile"></div>
+                    <span class="ml-2 text-sm" id="status-text-mobile">Connecting...</span>
+                </div>
+                <button onclick="refreshData(); toggleMobileNav();" class="btn-secondary w-full text-center py-2 mb-2">
+                    Refresh
+                </button>
             </div>
         </div>
     </nav>
@@ -63,10 +169,26 @@
     </main>
 
     <!-- Footer -->
-    <footer class="bg-gray-800 text-gray-300 mt-auto py-6">
-        <div class="container mx-auto px-4 text-center">
-            <p>&copy; 2026 NetMonDash - AI-Powered Network Monitoring</p>
-            <p class="text-sm mt-2">Last scan: <span id="last-scan-time">--</span></p>
+    <footer class="bg-gray-800 dark:bg-gray-950 text-gray-300 mt-auto py-6">
+        <div class="container mx-auto px-4">
+            <div class="flex flex-col md:flex-row justify-between items-center space-y-4 md:space-y-0">
+                <div class="text-center md:text-left">
+                    <p>&copy; 2026 NetMonDash - AI-Powered Network Monitoring</p>
+                    <p class="text-sm mt-1">Last scan: <span id="last-scan-time">--</span></p>
+                </div>
+                <div class="flex items-center space-x-6">
+                    <!-- Security Score -->
+                    <div class="flex items-center space-x-2">
+                        <span class="text-sm text-gray-400">Security Score:</span>
+                        <span id="footer-security-score" class="text-lg font-bold text-green-400">--</span>
+                        <span class="text-sm text-gray-500">/ 100</span>
+                    </div>
+                    <!-- Version -->
+                    <div class="text-sm text-gray-500">
+                        v2.0.0
+                    </div>
+                </div>
+            </div>
         </div>
     </footer>
 
@@ -76,9 +198,113 @@
     {% block extra_scripts %}{% endblock %}
 
     <script>
+        // Dark mode management
+        function toggleDarkMode() {
+            const html = document.documentElement;
+            const isDark = html.classList.toggle('dark');
+            localStorage.setItem('netmondash_dark_mode', isDark ? 'true' : 'false');
+            updateDarkModeIcon(isDark);
+            // Dispatch event for other components to sync
+            window.dispatchEvent(new CustomEvent('darkModeChanged', { detail: { dark: isDark } }));
+        }
+
+        function updateDarkModeIcon(isDark) {
+            const moonIcon = document.getElementById('dark-mode-icon-moon');
+            const sunIcon = document.getElementById('dark-mode-icon-sun');
+            if (isDark) {
+                moonIcon.classList.add('hidden');
+                sunIcon.classList.remove('hidden');
+            } else {
+                moonIcon.classList.remove('hidden');
+                sunIcon.classList.add('hidden');
+            }
+        }
+
+        function initDarkMode() {
+            const saved = localStorage.getItem('netmondash_dark_mode');
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const isDark = saved === 'true' || (saved === null && prefersDark);
+            if (isDark) {
+                document.documentElement.classList.add('dark');
+            }
+            updateDarkModeIcon(isDark);
+        }
+
+        // Mobile nav toggle
+        function toggleMobileNav() {
+            const mobileNav = document.getElementById('mobile-nav');
+            const hamburgerIcon = document.getElementById('hamburger-icon');
+            const hamburgerClose = document.getElementById('hamburger-close');
+            const isOpen = mobileNav.classList.toggle('open');
+            hamburgerIcon.classList.toggle('hidden', isOpen);
+            hamburgerClose.classList.toggle('hidden', !isOpen);
+        }
+
+        // Enhanced showNotification that uses toast container
+        const _originalShowNotification = typeof showNotification === 'function' ? showNotification : null;
+        function showToast(message, type) {
+            type = type || 'info';
+            const container = document.getElementById('toast-container');
+            if (!container) return;
+
+            const colorMap = {
+                success: 'bg-green-500',
+                error: 'bg-red-500',
+                warning: 'bg-yellow-500',
+                info: 'bg-blue-500',
+                critical: 'bg-red-700'
+            };
+
+            const toast = document.createElement('div');
+            toast.className = `toast ${colorMap[type] || colorMap.info} text-white px-4 py-3 rounded-lg shadow-lg flex items-center justify-between`;
+            toast.innerHTML = `
+                <span class="mr-3">${message}</span>
+                <button onclick="this.parentElement.remove()" class="text-white hover:text-gray-200 text-lg font-bold">&times;</button>
+            `;
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                if (toast.parentElement) {
+                    toast.style.opacity = '0';
+                    toast.style.transition = 'opacity 0.3s';
+                    setTimeout(() => toast.remove(), 300);
+                }
+            }, 5000);
+        }
+
+        // Load footer security score
+        async function loadFooterSecurityScore() {
+            try {
+                const response = await fetch('/api/stats');
+                if (response.ok) {
+                    const stats = await response.json();
+                    const scoreEl = document.getElementById('footer-security-score');
+                    if (scoreEl && stats.security_score !== undefined) {
+                        const score = stats.security_score;
+                        scoreEl.textContent = score;
+                        if (score >= 80) {
+                            scoreEl.className = 'text-lg font-bold text-green-400';
+                        } else if (score >= 60) {
+                            scoreEl.className = 'text-lg font-bold text-yellow-400';
+                        } else {
+                            scoreEl.className = 'text-lg font-bold text-red-400';
+                        }
+                    }
+                    if (stats.last_scan) {
+                        const el = document.getElementById('last-scan-time');
+                        if (el) el.textContent = formatTimeAgo(new Date(stats.last_scan));
+                    }
+                }
+            } catch (e) {
+                // Silently fail - footer score is non-critical
+            }
+        }
+
         // Initialize dashboard on page load
         document.addEventListener('DOMContentLoaded', function() {
+            initDarkMode();
             initializeDashboard();
+            loadFooterSecurityScore();
             {% block page_init %}{% endblock %}
         });
     </script>

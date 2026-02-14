@@ -160,9 +160,39 @@ CHART_UPDATE_INTERVAL_MS = 5000  # 5 seconds
 DEVICE_OFFLINE_THRESHOLD = 300  # seconds (5 minutes)
 DEVICE_HISTORY_RETENTION_DAYS = 30
 
+# Data Cleanup
+CLEANUP_INTERVAL_HOURS = 6  # Run cleanup every 6 hours
+
+# Dangerous Ports for Security Analysis
+DANGEROUS_PORTS = {
+    21: "FTP - unencrypted file transfer",
+    23: "Telnet - unencrypted remote access",
+    25: "SMTP - mail relay (potential spam relay)",
+    135: "MSRPC - Windows RPC",
+    137: "NetBIOS Name Service",
+    138: "NetBIOS Datagram",
+    139: "NetBIOS Session",
+    445: "SMB - file sharing (ransomware target)",
+    1433: "MSSQL - database",
+    1434: "MSSQL Browser",
+    3306: "MySQL - database",
+    3389: "RDP - remote desktop",
+    5432: "PostgreSQL - database",
+    5900: "VNC - remote desktop",
+    5901: "VNC - remote desktop",
+    6379: "Redis - in-memory database",
+    8080: "HTTP Proxy - alternate web",
+    8443: "HTTPS Alternate",
+    9200: "Elasticsearch",
+    27017: "MongoDB - database",
+}
+
 # MAC Vendor Lookup
 MAC_VENDOR_CACHE_HOURS = 24
 ENABLE_MAC_VENDOR_LOOKUP = True
+
+# Version
+APP_VERSION = "2.0.0"
 
 # Environment Variable Overrides
 def get_env_int(key: str, default: int) -> int:
