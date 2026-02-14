@@ -1572,6 +1572,615 @@ class AIAnalyzer:
 
         return recommendations
 
+    # ------------------------------------------------------------------
+    # Per-device risk scoring
+    # ------------------------------------------------------------------
+
+    def calculate_device_risk_score(self, device_data: Dict, is_gateway: bool = False) -> Dict:
+        """
+        Calculate a 0-100 risk score for a single device.
+
+        Higher score = higher risk.
+
+        Scoring methodology:
+        - Each dangerous port: +8 (critical) or +5 (other)
+        - Unknown vendor: +10
+        - Many open ports (>10): +10, (>5): +5
+        - Risky port combinations: +5 each
+        - No hostname: +3
+        - Gateway with dangerous ports: +15
+        - High latency (>100ms): +3
+        - Packet loss (>5%): +5
+
+        Args:
+            device_data: Device data dictionary
+            is_gateway: Whether this device is the gateway
+
+        Returns:
+            Dictionary with score, grade, risk_factors
+        """
+        score = 0
+        risk_factors: List[Dict] = []
+
+        ip = device_data.get("ip", "unknown")
+        vendor = device_data.get("vendor") or ""
+        hostname = device_data.get("hostname") or ""
+        open_ports = device_data.get("open_ports", [])
+        latency = device_data.get("latency_ms") or device_data.get("avg_latency_ms")
+        packet_loss = device_data.get("packet_loss")
+
+        port_set = set(int(p) if not isinstance(p, int) else p for p in open_ports)
+        critical_dangerous = {23, 21, 445, 3389, 5900}
+
+        # Dangerous ports
+        for port_int in port_set:
+            if port_int in DANGEROUS_PORTS:
+                points = 8 if port_int in critical_dangerous else 5
+                port_name = DANGEROUS_PORTS[port_int][0]
+                score += points
+                risk_factors.append({
+                    "factor": f"Port {port_int}/{port_name} open",
+                    "points": points,
+                    "severity": "critical" if points >= 8 else "warning",
+                })
+
+        # Unknown vendor
+        if not vendor or vendor.lower() in ("unknown", ""):
+            score += 10
+            risk_factors.append({
+                "factor": "Unknown vendor",
+                "points": 10,
+                "severity": "warning",
+            })
+
+        # Many open ports
+        if len(open_ports) > 10:
+            score += 10
+            risk_factors.append({
+                "factor": f"{len(open_ports)} open ports (high)",
+                "points": 10,
+                "severity": "warning",
+            })
+        elif len(open_ports) > 5:
+            score += 5
+            risk_factors.append({
+                "factor": f"{len(open_ports)} open ports (moderate)",
+                "points": 5,
+                "severity": "info",
+            })
+
+        # Risky combinations
+        for combo_ports, combo_desc in RISKY_COMBINATIONS:
+            if combo_ports.issubset(port_set):
+                score += 5
+                risk_factors.append({
+                    "factor": combo_desc,
+                    "points": 5,
+                    "severity": "warning",
+                })
+
+        # No hostname
+        if not hostname or hostname.lower() in ("unknown", ""):
+            score += 3
+            risk_factors.append({
+                "factor": "No hostname set",
+                "points": 3,
+                "severity": "info",
+            })
+
+        # Gateway specific
+        if is_gateway:
+            dangerous_on_gw = port_set & set(DANGEROUS_PORTS.keys()) - EXPECTED_GATEWAY_PORTS
+            if dangerous_on_gw:
+                score += 15
+                risk_factors.append({
+                    "factor": "Gateway has dangerous ports",
+                    "points": 15,
+                    "severity": "critical",
+                })
+
+        # Latency issues
+        if latency is not None:
+            try:
+                lat_val = float(latency)
+                if lat_val > 100:
+                    score += 3
+                    risk_factors.append({
+                        "factor": f"High latency ({lat_val:.0f}ms)",
+                        "points": 3,
+                        "severity": "info",
+                    })
+            except (ValueError, TypeError):
+                pass
+
+        # Packet loss
+        if packet_loss is not None:
+            try:
+                loss_val = float(packet_loss)
+                if loss_val > 5:
+                    score += 5
+                    risk_factors.append({
+                        "factor": f"Packet loss ({loss_val:.1f}%)",
+                        "points": 5,
+                        "severity": "warning",
+                    })
+            except (ValueError, TypeError):
+                pass
+
+        score = min(100, score)
+
+        # Grade (inverse of security score - high risk = bad grade)
+        if score <= 10:
+            grade = "A"
+            risk_level = "low"
+        elif score <= 25:
+            grade = "B"
+            risk_level = "low-medium"
+        elif score <= 40:
+            grade = "C"
+            risk_level = "medium"
+        elif score <= 60:
+            grade = "D"
+            risk_level = "high"
+        else:
+            grade = "F"
+            risk_level = "critical"
+
+        return {
+            "device_ip": ip,
+            "score": score,
+            "grade": grade,
+            "risk_level": risk_level,
+            "risk_factors": risk_factors,
+        }
+
+    def calculate_all_device_risks(self, scan_data: Dict) -> List[Dict]:
+        """Calculate risk scores for all devices in scan data.
+
+        Args:
+            scan_data: Network scan data dictionary
+
+        Returns:
+            List of device risk score dictionaries, sorted by score descending
+        """
+        devices = scan_data.get("devices", [])
+        gateway_ip = scan_data.get("gateway", scan_data.get("gateway_ip"))
+        results = []
+
+        for device in devices:
+            ip = device.get("ip", "")
+            is_gw = (gateway_ip and ip == gateway_ip)
+            risk = self.calculate_device_risk_score(device, is_gateway=is_gw)
+            results.append(risk)
+
+        results.sort(key=lambda r: r["score"], reverse=True)
+        logger.info(f"Calculated risk scores for {len(results)} devices")
+        return results
+
+    # ------------------------------------------------------------------
+    # Latency/Performance health analysis
+    # ------------------------------------------------------------------
+
+    def analyze_latency_health(self, devices_data: List[Dict]) -> List[AIRecommendation]:
+        """
+        Analyze network latency and performance health.
+
+        Args:
+            devices_data: List of device dictionaries with latency data
+
+        Returns:
+            List of performance recommendations
+        """
+        recommendations: List[AIRecommendation] = []
+
+        latencies = []
+        jitters = []
+        losses = []
+        high_latency_devices = []
+        high_loss_devices = []
+
+        for device in devices_data:
+            ip = device.get("ip", "unknown")
+            lat = device.get("latency_ms") or device.get("avg_latency_ms")
+            jit = device.get("jitter_ms")
+            loss = device.get("packet_loss")
+
+            if lat is not None:
+                try:
+                    lat_val = float(lat)
+                    latencies.append(lat_val)
+                    if lat_val > 100:
+                        high_latency_devices.append((ip, lat_val))
+                except (ValueError, TypeError):
+                    pass
+
+            if jit is not None:
+                try:
+                    jitters.append(float(jit))
+                except (ValueError, TypeError):
+                    pass
+
+            if loss is not None:
+                try:
+                    loss_val = float(loss)
+                    losses.append(loss_val)
+                    if loss_val > 2:
+                        high_loss_devices.append((ip, loss_val))
+                except (ValueError, TypeError):
+                    pass
+
+        # Overall latency assessment
+        if latencies:
+            avg_lat = sum(latencies) / len(latencies)
+            max_lat = max(latencies)
+
+            if avg_lat > 100:
+                recommendations.append(AIRecommendation(
+                    severity=SEVERITY_CRITICAL,
+                    description=(
+                        f"Average network latency is critically high ({avg_lat:.1f}ms). "
+                        f"Users will experience significant delays."
+                    ),
+                    recommendation=(
+                        "Check for network congestion, bandwidth saturation, or "
+                        "hardware issues. Consider upgrading network infrastructure."
+                    ),
+                    category="performance",
+                ))
+            elif avg_lat > 50:
+                recommendations.append(AIRecommendation(
+                    severity=SEVERITY_WARNING,
+                    description=f"Average network latency is elevated ({avg_lat:.1f}ms).",
+                    recommendation=(
+                        "Monitor for trending increases. Check for bandwidth-heavy "
+                        "applications or misconfigured QoS settings."
+                    ),
+                    category="performance",
+                ))
+            else:
+                recommendations.append(AIRecommendation(
+                    severity=SEVERITY_INFO,
+                    description=f"Average network latency is healthy ({avg_lat:.1f}ms).",
+                    recommendation="Latency is within normal parameters.",
+                    category="performance",
+                ))
+
+            # P95 latency
+            sorted_lat = sorted(latencies)
+            p95_idx = int(len(sorted_lat) * 0.95)
+            p95_lat = sorted_lat[min(p95_idx, len(sorted_lat) - 1)]
+            if p95_lat > 200:
+                recommendations.append(AIRecommendation(
+                    severity=SEVERITY_WARNING,
+                    description=(
+                        f"P95 latency is {p95_lat:.1f}ms - some devices have "
+                        f"significantly higher latency than average."
+                    ),
+                    recommendation=(
+                        "Investigate devices with high latency. They may have "
+                        "connectivity issues or be on congested segments."
+                    ),
+                    category="performance",
+                ))
+
+        # Per-device high latency
+        for ip, lat in high_latency_devices[:5]:
+            recommendations.append(AIRecommendation(
+                severity=SEVERITY_WARNING,
+                description=f"Device {ip} has high latency ({lat:.1f}ms).",
+                recommendation=f"Check connectivity to {ip}. May indicate WiFi issues or routing problems.",
+                command=f"ping -c 10 {ip}",
+                category="performance",
+            ))
+
+        # Jitter analysis
+        if jitters:
+            avg_jitter = sum(jitters) / len(jitters)
+            if avg_jitter > 30:
+                recommendations.append(AIRecommendation(
+                    severity=SEVERITY_WARNING,
+                    description=(
+                        f"Network jitter is high ({avg_jitter:.1f}ms). "
+                        f"VoIP and video calls will be affected."
+                    ),
+                    recommendation=(
+                        "Enable QoS on router to prioritize real-time traffic. "
+                        "Check for bandwidth-saturating downloads."
+                    ),
+                    category="performance",
+                ))
+
+        # Packet loss
+        if losses:
+            avg_loss = sum(losses) / len(losses)
+            if avg_loss > 5:
+                recommendations.append(AIRecommendation(
+                    severity=SEVERITY_CRITICAL,
+                    description=f"Average packet loss is critically high ({avg_loss:.1f}%).",
+                    recommendation=(
+                        "Check for failing hardware, cable issues, or severe congestion. "
+                        "Packet loss above 5% causes major performance degradation."
+                    ),
+                    category="performance",
+                ))
+            elif avg_loss > 1:
+                recommendations.append(AIRecommendation(
+                    severity=SEVERITY_WARNING,
+                    description=f"Average packet loss is elevated ({avg_loss:.1f}%).",
+                    recommendation="Monitor for increases. Check WiFi interference or cable quality.",
+                    category="performance",
+                ))
+
+        for ip, loss in high_loss_devices[:3]:
+            recommendations.append(AIRecommendation(
+                severity=SEVERITY_WARNING,
+                description=f"Device {ip} has high packet loss ({loss:.1f}%).",
+                recommendation=f"Check connectivity to {ip}.",
+                command=f"ping -c 20 {ip}",
+                category="performance",
+            ))
+
+        if not recommendations:
+            recommendations.append(AIRecommendation(
+                severity=SEVERITY_INFO,
+                description="No latency data available for analysis.",
+                recommendation="Run a scan with latency measurement enabled.",
+                category="performance",
+            ))
+
+        return recommendations
+
+    # ------------------------------------------------------------------
+    # Trend analysis
+    # ------------------------------------------------------------------
+
+    def analyze_network_trends(
+        self,
+        device_count_trend: List[Dict],
+        alert_trend: List[Dict],
+        latency_trend: List[Dict],
+    ) -> List[AIRecommendation]:
+        """
+        Analyze network trends over time and generate insights.
+
+        Args:
+            device_count_trend: List of {timestamp, device_count, new_devices, offline_devices}
+            alert_trend: List of {date, critical, warning, info, total}
+            latency_trend: List of {timestamp, latency_ms, packet_loss_pct, jitter_ms}
+
+        Returns:
+            List of trend-based recommendations
+        """
+        recommendations: List[AIRecommendation] = []
+
+        # Device count trend
+        if len(device_count_trend) >= 2:
+            counts = [d.get("device_count", 0) for d in device_count_trend]
+            first_half = counts[:len(counts) // 2]
+            second_half = counts[len(counts) // 2:]
+
+            avg_first = sum(first_half) / len(first_half) if first_half else 0
+            avg_second = sum(second_half) / len(second_half) if second_half else 0
+
+            if avg_second > avg_first * 1.3 and avg_first > 0:
+                growth_pct = ((avg_second - avg_first) / avg_first) * 100
+                recommendations.append(AIRecommendation(
+                    severity=SEVERITY_WARNING,
+                    description=(
+                        f"Device count is trending upward ({growth_pct:.0f}% increase). "
+                        f"Average grew from {avg_first:.0f} to {avg_second:.0f}."
+                    ),
+                    recommendation=(
+                        "Review new devices for unauthorized access. "
+                        "Consider implementing MAC address filtering or 802.1X."
+                    ),
+                    category="trend",
+                ))
+            elif avg_second < avg_first * 0.7 and avg_first > 0:
+                decline_pct = ((avg_first - avg_second) / avg_first) * 100
+                recommendations.append(AIRecommendation(
+                    severity=SEVERITY_INFO,
+                    description=(
+                        f"Device count is trending downward ({decline_pct:.0f}% decrease). "
+                        f"Average dropped from {avg_first:.0f} to {avg_second:.0f}."
+                    ),
+                    recommendation="Verify devices are going offline intentionally.",
+                    category="trend",
+                ))
+
+            # New device spike detection
+            new_counts = [d.get("new_devices", 0) for d in device_count_trend]
+            if new_counts:
+                avg_new = sum(new_counts) / len(new_counts)
+                max_new = max(new_counts)
+                if max_new > avg_new * 3 and avg_new > 0:
+                    recommendations.append(AIRecommendation(
+                        severity=SEVERITY_WARNING,
+                        description=(
+                            f"Spike in new devices detected: {max_new} in one scan "
+                            f"(average is {avg_new:.1f})."
+                        ),
+                        recommendation="Investigate the sudden influx of new devices.",
+                        category="trend",
+                    ))
+
+        # Alert trend
+        if alert_trend:
+            total_alerts = sum(d.get("total", 0) for d in alert_trend)
+            critical_alerts = sum(d.get("critical", 0) for d in alert_trend)
+
+            if len(alert_trend) >= 2:
+                recent_total = sum(d.get("total", 0) for d in alert_trend[-2:])
+                older_total = sum(d.get("total", 0) for d in alert_trend[:-2]) if len(alert_trend) > 2 else 0
+                older_days = max(1, len(alert_trend) - 2)
+                daily_rate_recent = recent_total / 2
+                daily_rate_older = older_total / older_days
+
+                if daily_rate_recent > daily_rate_older * 2 and daily_rate_older > 0:
+                    recommendations.append(AIRecommendation(
+                        severity=SEVERITY_WARNING,
+                        description=(
+                            f"Alert rate is increasing: {daily_rate_recent:.1f}/day recently "
+                            f"vs {daily_rate_older:.1f}/day previously."
+                        ),
+                        recommendation="Review recent alerts and address root causes.",
+                        category="trend",
+                    ))
+
+            if critical_alerts > 0:
+                recommendations.append(AIRecommendation(
+                    severity=SEVERITY_CRITICAL if critical_alerts > 5 else SEVERITY_WARNING,
+                    description=f"{critical_alerts} critical alerts in the trend period.",
+                    recommendation="Address all critical alerts promptly.",
+                    category="trend",
+                ))
+
+        # Latency trend
+        if len(latency_trend) >= 3:
+            lat_values = [d.get("latency_ms") for d in latency_trend if d.get("latency_ms") is not None]
+            if len(lat_values) >= 3:
+                first_third = lat_values[:len(lat_values) // 3]
+                last_third = lat_values[-len(lat_values) // 3:]
+
+                avg_early = sum(first_third) / len(first_third) if first_third else 0
+                avg_late = sum(last_third) / len(last_third) if last_third else 0
+
+                if avg_late > avg_early * 1.5 and avg_early > 0:
+                    recommendations.append(AIRecommendation(
+                        severity=SEVERITY_WARNING,
+                        description=(
+                            f"Latency is trending upward: {avg_early:.1f}ms -> {avg_late:.1f}ms."
+                        ),
+                        recommendation=(
+                            "Network performance is degrading over time. "
+                            "Check for increasing load or hardware issues."
+                        ),
+                        category="trend",
+                    ))
+
+        if not recommendations:
+            recommendations.append(AIRecommendation(
+                severity=SEVERITY_INFO,
+                description="Network trends appear stable.",
+                recommendation="No concerning trends detected. Continue monitoring.",
+                category="trend",
+            ))
+
+        return recommendations
+
+    # ------------------------------------------------------------------
+    # Comprehensive health report
+    # ------------------------------------------------------------------
+
+    def get_comprehensive_health_report(
+        self,
+        scan_data: Dict,
+        wifi_data: Optional[Dict] = None,
+        devices_data: Optional[List[Dict]] = None,
+        device_count_trend: Optional[List[Dict]] = None,
+        alert_trend: Optional[List[Dict]] = None,
+        latency_trend: Optional[List[Dict]] = None,
+    ) -> Dict:
+        """
+        Generate a comprehensive health report combining all analysis types.
+
+        Args:
+            scan_data: Network scan data
+            wifi_data: WiFi metrics (optional)
+            devices_data: Device list with latency data (optional)
+            device_count_trend: Device count trend data (optional)
+            alert_trend: Alert trend data (optional)
+            latency_trend: Latency trend data (optional)
+
+        Returns:
+            Dictionary with all analysis results and overall health score
+        """
+        report: Dict = {
+            "timestamp": datetime.now().isoformat(),
+            "security": {},
+            "health": [],
+            "wifi": [],
+            "performance": [],
+            "trends": [],
+            "device_risks": [],
+            "overall_score": 0,
+            "overall_grade": "N/A",
+        }
+
+        # Security score
+        try:
+            report["security"] = self.calculate_security_score(scan_data)
+        except Exception as e:
+            logger.error(f"Security scoring failed: {e}")
+            report["security"] = {"score": 0, "grade": "N/A", "penalties": [], "summary": "Error"}
+
+        # Health analysis
+        try:
+            report["health"] = [r.to_dict() for r in self.analyze_network_health(scan_data)]
+        except Exception as e:
+            logger.error(f"Health analysis failed: {e}")
+
+        # WiFi analysis
+        if wifi_data:
+            try:
+                report["wifi"] = [r.to_dict() for r in self.analyze_wifi_optimization(wifi_data)]
+            except Exception as e:
+                logger.error(f"WiFi analysis failed: {e}")
+
+        # Performance analysis
+        if devices_data:
+            try:
+                report["performance"] = [r.to_dict() for r in self.analyze_latency_health(devices_data)]
+            except Exception as e:
+                logger.error(f"Performance analysis failed: {e}")
+
+        # Trend analysis
+        if device_count_trend or alert_trend or latency_trend:
+            try:
+                report["trends"] = [
+                    r.to_dict() for r in self.analyze_network_trends(
+                        device_count_trend or [],
+                        alert_trend or [],
+                        latency_trend or [],
+                    )
+                ]
+            except Exception as e:
+                logger.error(f"Trend analysis failed: {e}")
+
+        # Device risk scores
+        try:
+            report["device_risks"] = self.calculate_all_device_risks(scan_data)
+        except Exception as e:
+            logger.error(f"Device risk scoring failed: {e}")
+
+        # Calculate overall score (weighted average)
+        security_score = report["security"].get("score", 50)
+
+        # Count severe findings across all categories
+        all_findings = report["health"] + report["wifi"] + report["performance"] + report["trends"]
+        critical_count = sum(1 for f in all_findings if f.get("severity") == "critical")
+        warning_count = sum(1 for f in all_findings if f.get("severity") == "warning")
+
+        overall = security_score - (critical_count * 5) - (warning_count * 2)
+        overall = max(0, min(100, overall))
+
+        report["overall_score"] = overall
+        if overall >= 90:
+            report["overall_grade"] = "A"
+        elif overall >= 80:
+            report["overall_grade"] = "B"
+        elif overall >= 70:
+            report["overall_grade"] = "C"
+        elif overall >= 60:
+            report["overall_grade"] = "D"
+        else:
+            report["overall_grade"] = "F"
+
+        logger.info(
+            f"Comprehensive health report: score={overall}/100 grade={report['overall_grade']}"
+        )
+        return report
+
 
 if __name__ == "__main__":
     # Test the AI analyzer

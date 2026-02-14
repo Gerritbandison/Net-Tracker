@@ -3,7 +3,8 @@ API Routes
 
 FastAPI routes for NetMonDash dashboard.
 Provides HTML page routes and REST API endpoints for device management,
-scanning, alerts, events, analytics, and system administration.
+scanning, alerts, events, analytics, trends, device risk scoring,
+channel analysis, scan profiles, and system administration.
 """
 
 import asyncio
@@ -115,16 +116,33 @@ async def get_devices(
     request: Request,
     online_only: bool = Query(False, description="Only return online devices"),
     category: Optional[str] = Query(None, description="Filter by device category"),
+    page: int = Query(0, ge=0, description="Page number (0 = no pagination)"),
+    per_page: int = Query(50, ge=1, le=200, description="Items per page"),
+    sort_by: str = Query("last_seen", description="Sort field"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$", description="Sort order"),
+    search: Optional[str] = Query(None, description="Search query"),
 ):
-    """Get all network devices with optional filtering."""
+    """Get all network devices with optional filtering, sorting, and pagination."""
     db = _get_db(request)
 
     try:
-        devices = db.get_all_devices(online_only=online_only, category=category)
-        return {
-            "count": len(devices),
-            "devices": [device.to_dict() for device in devices],
-        }
+        if page > 0:
+            result = db.get_devices_paginated(
+                page=page,
+                per_page=per_page,
+                online_only=online_only,
+                category=category,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                search=search,
+            )
+            return result.to_dict()
+        else:
+            devices = db.get_all_devices(online_only=online_only, category=category)
+            return {
+                "count": len(devices),
+                "devices": [device.to_dict() for device in devices],
+            }
     except Exception as e:
         logger.error(f"Error getting devices: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -165,6 +183,85 @@ async def get_device(request: Request, mac: str):
         raise
     except Exception as e:
         logger.error(f"Error getting device {mac}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/devices/{mac}/changelog")
+async def get_device_changelog(
+    request: Request,
+    mac: str,
+    limit: int = Query(50, ge=1, le=200, description="Maximum changes to return"),
+):
+    """Get change history for a specific device."""
+    db = _get_db(request)
+
+    try:
+        device = db.get_device(mac)
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
+
+        changes = db.get_device_changelog(mac, limit=limit)
+        return {
+            "device_mac": mac,
+            "count": len(changes),
+            "changes": [c.to_dict() for c in changes],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting device changelog: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/devices/{mac}/uptime")
+async def get_device_uptime(
+    request: Request,
+    mac: str,
+    days: int = Query(7, ge=1, le=90, description="Days to look back"),
+):
+    """Get uptime statistics for a specific device."""
+    db = _get_db(request)
+
+    try:
+        device = db.get_device(mac)
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
+
+        uptime = db.get_device_uptime(mac, days=days)
+        return uptime
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting device uptime: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/devices/{mac}/risk")
+async def get_device_risk(request: Request, mac: str):
+    """Get risk score for a specific device."""
+    db = _get_db(request)
+    ai = _get_ai(request)
+    scanner = request.app.state.scanner
+
+    try:
+        device = db.get_device(mac)
+        if not device:
+            raise HTTPException(status_code=404, detail="Device not found")
+
+        device_data = device.to_dict()
+        gateway_ip = scanner.get_gateway_ip() if scanner else None
+        is_gw = (gateway_ip and device_data.get("ip") == gateway_ip)
+
+        risk = ai.calculate_device_risk_score(device_data, is_gateway=is_gw)
+
+        # Persist the risk score
+        db.update_device_risk_score(mac, risk["score"])
+
+        return risk
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error calculating device risk: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -323,6 +420,36 @@ async def get_scan_history(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/api/scans/stats")
+async def get_scan_stats(
+    request: Request,
+    hours: int = Query(24, ge=1, le=168, description="Hours to look back"),
+):
+    """Get aggregated scan statistics."""
+    db = _get_db(request)
+
+    try:
+        stats = db.get_scan_stats(hours=hours)
+        return stats
+    except Exception as e:
+        logger.error(f"Error getting scan stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/scan/profiles")
+async def get_scan_profiles(request: Request):
+    """Get available scan profiles."""
+    scanner = _get_scanner(request)
+
+    try:
+        return {
+            "profiles": scanner.get_available_profiles(),
+        }
+    except Exception as e:
+        logger.error(f"Error getting scan profiles: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/api/scan/trigger")
 async def trigger_scan(request: Request):
     """Trigger a manual network scan by setting the scan event flag."""
@@ -391,20 +518,47 @@ async def get_wifi_networks(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/api/wifi/channel-analysis")
+async def get_channel_analysis(request: Request):
+    """Get WiFi channel analysis and recommendations."""
+    scanner = _get_scanner(request)
+
+    try:
+        analysis = scanner.get_channel_analysis()
+        return analysis
+    except Exception as e:
+        logger.error(f"Error getting channel analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── Alert API Endpoints ──────────────────────────────────────────────────────
 
 @router.get("/api/alerts")
 async def get_alerts(
     request: Request,
     unacknowledged_only: bool = Query(False, description="Only return unacknowledged alerts"),
+    severity: Optional[str] = Query(None, description="Filter by severity"),
     limit: int = Query(50, ge=1, le=200, description="Maximum number of alerts"),
+    page: int = Query(0, ge=0, description="Page number (0 = no pagination)"),
+    per_page: int = Query(50, ge=1, le=200, description="Items per page"),
 ):
-    """Get alerts."""
+    """Get alerts with optional filtering and pagination."""
     db = _get_db(request)
 
     try:
+        if page > 0:
+            result = db.get_alerts_paginated(
+                page=page,
+                per_page=per_page,
+                severity=severity,
+                acknowledged=False if unacknowledged_only else None,
+            )
+            return result.to_dict()
+
         if unacknowledged_only:
             alerts = db.get_unacknowledged_alerts()
+        elif severity:
+            alerts = db.get_alerts_by_severity(severity, limit=limit)
         else:
             alerts = db.get_recent_alerts(limit=limit)
 
@@ -414,6 +568,18 @@ async def get_alerts(
         }
     except Exception as e:
         logger.error(f"Error getting alerts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/alerts/summary")
+async def get_alert_summary(request: Request):
+    """Get alert count summary by severity."""
+    db = _get_db(request)
+
+    try:
+        return db.get_alert_summary()
+    except Exception as e:
+        logger.error(f"Error getting alert summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -517,6 +683,109 @@ async def get_latency_history(
         }
     except Exception as e:
         logger.error(f"Error getting latency history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Trend API Endpoints ────────────────────────────────────────────────────
+
+@router.get("/api/trends/devices")
+async def get_device_count_trend(
+    request: Request,
+    days: int = Query(7, ge=1, le=90, description="Days to look back"),
+):
+    """Get device count trend over time."""
+    db = _get_db(request)
+
+    try:
+        trend = db.get_device_count_trend(days=days)
+        return {
+            "days": days,
+            "count": len(trend),
+            "trend": trend,
+        }
+    except Exception as e:
+        logger.error(f"Error getting device count trend: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/trends/latency")
+async def get_latency_trend(
+    request: Request,
+    hours: int = Query(24, ge=1, le=168, description="Hours to look back"),
+    device_mac: Optional[str] = Query(None, description="Filter by device MAC"),
+):
+    """Get latency trend data for charting."""
+    db = _get_db(request)
+
+    try:
+        trend = db.get_latency_trend(hours=hours, device_mac=device_mac)
+        return {
+            "hours": hours,
+            "device_mac": device_mac,
+            "count": len(trend),
+            "trend": trend,
+        }
+    except Exception as e:
+        logger.error(f"Error getting latency trend: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/trends/alerts")
+async def get_alert_trend(
+    request: Request,
+    days: int = Query(7, ge=1, le=90, description="Days to look back"),
+):
+    """Get alert count trend by day."""
+    db = _get_db(request)
+
+    try:
+        trend = db.get_alert_trend(days=days)
+        return {
+            "days": days,
+            "count": len(trend),
+            "trend": trend,
+        }
+    except Exception as e:
+        logger.error(f"Error getting alert trend: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/trends/events")
+async def get_event_frequency(
+    request: Request,
+    days: int = Query(7, ge=1, le=90, description="Days to look back"),
+):
+    """Get event type frequency distribution."""
+    db = _get_db(request)
+
+    try:
+        freq = db.get_event_frequency(days=days)
+        return {
+            "days": days,
+            "event_types": freq,
+        }
+    except Exception as e:
+        logger.error(f"Error getting event frequency: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/trends/scan-duration")
+async def get_scan_duration_trend(
+    request: Request,
+    days: int = Query(7, ge=1, le=90, description="Days to look back"),
+):
+    """Get scan duration trend for performance monitoring."""
+    db = _get_db(request)
+
+    try:
+        trend = db.get_scan_duration_trend(days=days)
+        return {
+            "days": days,
+            "count": len(trend),
+            "trend": trend,
+        }
+    except Exception as e:
+        logger.error(f"Error getting scan duration trend: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -653,6 +922,153 @@ async def analyze_wifi(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/api/analyze/performance")
+async def analyze_performance(request: Request):
+    """Perform latency and performance analysis on all devices."""
+    db = _get_db(request)
+    ai = _get_ai(request)
+
+    try:
+        devices = db.get_all_devices(online_only=True)
+        if not devices:
+            raise HTTPException(status_code=404, detail="No online devices")
+
+        devices_data = [d.to_dict() for d in devices]
+        recommendations = ai.analyze_latency_health(devices_data)
+
+        return {
+            "count": len(recommendations),
+            "recommendations": [rec.to_dict() for rec in recommendations],
+            "timestamp": datetime.now().isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error performing performance analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/analyze/trends")
+async def analyze_trends(
+    request: Request,
+    days: int = Query(7, ge=1, le=90, description="Days to look back"),
+):
+    """Perform trend analysis across device counts, alerts, and latency."""
+    db = _get_db(request)
+    ai = _get_ai(request)
+
+    try:
+        device_trend = db.get_device_count_trend(days=days)
+        alert_trend = db.get_alert_trend(days=days)
+        latency_trend = db.get_latency_trend(hours=days * 24)
+
+        recommendations = ai.analyze_network_trends(
+            device_trend, alert_trend, latency_trend
+        )
+
+        return {
+            "count": len(recommendations),
+            "recommendations": [rec.to_dict() for rec in recommendations],
+            "timestamp": datetime.now().isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error performing trend analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/analyze/comprehensive")
+async def analyze_comprehensive(request: Request):
+    """Run comprehensive analysis combining all analysis types."""
+    db = _get_db(request)
+    ai = _get_ai(request)
+    scanner = request.app.state.scanner
+
+    try:
+        # Get scan data
+        scans = db.get_recent_scans(limit=1)
+        scan_data = scans[0].to_dict().get("raw_data", {}) if scans else {}
+
+        # Get WiFi data
+        wifi_data = None
+        if scanner:
+            try:
+                metrics = scanner.get_wifi_metrics()
+                if metrics:
+                    wifi_data = metrics.to_dict()
+            except Exception:
+                pass
+
+        # Get device data
+        devices = db.get_all_devices(online_only=True)
+        devices_data = [d.to_dict() for d in devices] if devices else None
+
+        # Get trend data
+        device_trend = db.get_device_count_trend(days=7)
+        alert_trend = db.get_alert_trend(days=7)
+        latency_trend = db.get_latency_trend(hours=168)
+
+        report = ai.get_comprehensive_health_report(
+            scan_data=scan_data,
+            wifi_data=wifi_data,
+            devices_data=devices_data,
+            device_count_trend=device_trend,
+            alert_trend=alert_trend,
+            latency_trend=latency_trend,
+        )
+
+        return report
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error performing comprehensive analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/analyze/device-risks")
+async def get_all_device_risks(request: Request):
+    """Get risk scores for all devices, sorted by risk."""
+    db = _get_db(request)
+    ai = _get_ai(request)
+    scanner = request.app.state.scanner
+
+    try:
+        devices = db.get_all_devices()
+        gateway_ip = scanner.get_gateway_ip() if scanner else None
+
+        device_dicts = [d.to_dict() for d in devices]
+        scan_data = {
+            "devices": device_dicts,
+            "gateway": gateway_ip,
+        }
+
+        risks = ai.calculate_all_device_risks(scan_data)
+
+        # Persist scores
+        for risk in risks:
+            mac = None
+            ip = risk.get("device_ip", "")
+            for d in devices:
+                if d.ip == ip:
+                    mac = d.mac
+                    break
+            if mac:
+                db.update_device_risk_score(mac, risk["score"])
+
+        return {
+            "count": len(risks),
+            "device_risks": risks,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error calculating device risks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── Network Summary Endpoint ─────────────────────────────────────────────────
 
 @router.get("/api/network/summary")
@@ -687,6 +1103,40 @@ async def get_network_summary(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/api/network/health")
+async def get_network_health(request: Request):
+    """Get network health summary."""
+    db = _get_db(request)
+
+    try:
+        health = db.get_network_health_summary()
+        return health
+    except Exception as e:
+        logger.error(f"Error getting network health: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/network/timeline")
+async def get_network_timeline(
+    request: Request,
+    hours: int = Query(24, ge=1, le=168, description="Hours to look back"),
+    limit: int = Query(100, ge=1, le=500, description="Maximum events"),
+):
+    """Get a timeline of network events."""
+    db = _get_db(request)
+
+    try:
+        timeline = db.get_network_timeline(hours=hours, limit=limit)
+        return {
+            "hours": hours,
+            "count": len(timeline),
+            "events": timeline,
+        }
+    except Exception as e:
+        logger.error(f"Error getting network timeline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── Categories Endpoint ──────────────────────────────────────────────────────
 
 @router.get("/api/categories")
@@ -717,13 +1167,32 @@ async def get_categories(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/api/vendors")
+async def get_top_vendors(
+    request: Request,
+    limit: int = Query(10, ge=1, le=50, description="Number of top vendors"),
+):
+    """Get top vendors by device count."""
+    db = _get_db(request)
+
+    try:
+        vendors = db.get_device_count_by_vendor(limit=limit)
+        return {
+            "count": len(vendors),
+            "vendors": [{"vendor": v, "count": c} for v, c in vendors],
+        }
+    except Exception as e:
+        logger.error(f"Error getting vendors: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── Export Endpoint ───────────────────────────────────────────────────────────
 
 @router.get("/api/export")
 async def export_data(
     request: Request,
     format: str = Query("json", pattern="^(json|csv)$", description="Export format"),
-    data_type: str = Query("devices", pattern="^(devices|scans|alerts)$", description="Data type"),
+    data_type: str = Query("devices", pattern="^(devices|scans|alerts|events)$", description="Data type"),
 ):
     """Export data in various formats."""
     db = _get_db(request)
@@ -739,6 +1208,9 @@ async def export_data(
         elif data_type == "alerts":
             items = db.get_recent_alerts(limit=100)
             data = [alert.to_dict() for alert in items]
+        elif data_type == "events":
+            items = db.get_recent_events(limit=500)
+            data = [event.to_dict() for event in items]
         else:
             raise HTTPException(status_code=400, detail="Invalid data type")
 
