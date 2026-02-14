@@ -1083,6 +1083,72 @@ class NetworkScanner:
         return devices
 
     # ------------------------------------------------------------------
+    # Deep scan for a single device (nmap on demand)
+    # ------------------------------------------------------------------
+
+    def deep_scan_device(
+        self,
+        ip: str,
+        service_detection: bool = True,
+        os_detection: bool = True,
+        measure_latency: bool = True,
+    ) -> Optional[DeviceInfo]:
+        """Run a full nmap scan against a single host.
+
+        This is the *expensive* path — used only for unknown MACs, user-
+        initiated deep scans, or periodic re-scans every 30–60 min.
+
+        Args:
+            ip: Target IP address.
+            service_detection: Run service/version detection (-sV).
+            os_detection: Run OS fingerprinting (-O).
+            measure_latency: Ping the host for latency stats.
+
+        Returns:
+            A populated DeviceInfo, or None if the host is unreachable.
+        """
+        cmd = ["nmap", "-oX", "-"]
+
+        if service_detection and os_detection:
+            cmd.extend(["-sV", "-O", "-T4", "--version-light"])
+        elif service_detection:
+            cmd.extend(["-sV", "-T4", "--version-light"])
+        else:
+            cmd.extend(["-sn", "-T4"])
+
+        if self.interface:
+            cmd.extend(["-e", self.interface])
+        cmd.append(ip)
+
+        logger.info("Deep scanning %s with: %s", ip, " ".join(cmd))
+        stdout, stderr, returncode = self._run_command(cmd, timeout=120)
+
+        if returncode != 0:
+            logger.warning("Deep scan of %s failed: %s", ip, stderr)
+            return None
+
+        devices = self._parse_nmap_xml(stdout)
+        if not devices:
+            return None
+
+        device = devices[0]
+
+        # Measure latency
+        if measure_latency:
+            details = self.ping_host_detailed(ip, count=3, timeout=2)
+            device.latency_ms = details.get("avg_ms")
+            device.jitter_ms = details.get("jitter_ms")
+            device.packet_loss = details.get("packet_loss")
+            device.ttl = details.get("ttl")
+
+        device.compute_service_categories()
+        logger.info(
+            "Deep scan of %s complete: %d ports, os=%s",
+            ip, len(device.open_ports), device.os_guess,
+        )
+        return device
+
+    # ------------------------------------------------------------------
     # Network scan (main entry point)
     # ------------------------------------------------------------------
 

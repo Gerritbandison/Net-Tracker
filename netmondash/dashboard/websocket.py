@@ -269,6 +269,22 @@ async def broadcast_event(event_data: dict):
     })
 
 
+async def broadcast_discovery_batch(event_type: str, devices: list):
+    """Broadcast a batch of discovery events (join/leave/ip_change).
+
+    Called from the discovery engine's event batcher so multiple devices
+    that appear within the same flush window are sent as one WebSocket
+    message instead of N individual messages.
+    """
+    await manager.broadcast({
+        "type": "discovery_batch",
+        "event": event_type,
+        "data": [d if isinstance(d, dict) else d.to_dict() for d in devices],
+        "count": len(devices),
+        "timestamp": datetime.now().isoformat(),
+    }, channel="devices")
+
+
 __all__ = [
     "router",
     "manager",
@@ -277,4 +293,5 @@ __all__ = [
     "broadcast_alert",
     "broadcast_stats",
     "broadcast_event",
+    "broadcast_discovery_batch",
 ]
