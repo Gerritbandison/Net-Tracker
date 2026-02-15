@@ -3,6 +3,21 @@
 NetMonDash - AI-Powered Network Device Monitor Dashboard
 
 Main entry point for the application.
+
+Architecture:
+    1. **DiscoveryEngine** (always-on, lightweight)
+       - Passive ARP sniffing via scapy AsyncSniffer (zero extra traffic)
+       - Active ARP sweep every 15 s (< 1 s for a /24, near-zero CPU)
+       - In-memory DeviceRegistry with TTL-based stale detection
+       - Batched event delivery to WebSocket clients
+
+    2. **Deep nmap scan** (infrequent, expensive)
+       - Triggered for **new MACs** (unknown device just joined)
+       - Triggered on a **long interval** (default 30 min) for all devices
+       - Triggered **manually** via the dashboard "Scan Now" button
+       - Provides service/version/OS detection, port enumeration
+
+    3. **Cleanup loop** runs every 6 hours to prune old DB records.
 """
 
 import argparse
@@ -14,7 +29,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Set
 
 import uvicorn
 
@@ -28,6 +43,11 @@ from config import (
     LOG_MAX_BYTES,
     LOG_BACKUP_COUNT,
     ENABLE_AI,
+    DISCOVERY_ACTIVE_INTERVAL,
+    DISCOVERY_STALE_TIMEOUT,
+    DISCOVERY_BATCH_INTERVAL,
+    DEEP_SCAN_INTERVAL,
+    DEEP_SCAN_NEW_DEVICE_DELAY,
 )
 
 from modules import (
@@ -37,15 +57,21 @@ from modules import (
     AIAnalyzer,
     init_database,
     Notifier,
+    DiscoveryEngine,
+    DiscoveredDevice,
 )
 
 from dashboard import create_app
-from dashboard.websocket import broadcast_scan_update, broadcast_device_update
+from dashboard.websocket import (
+    broadcast_scan_update,
+    broadcast_device_update,
+    broadcast_discovery_batch,
+)
 
 # Setup logging
 from logging.handlers import RotatingFileHandler
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 CLEANUP_INTERVAL_SECONDS = 6 * 60 * 60  # 6 hours
 
@@ -85,6 +111,7 @@ def setup_logging(verbose: bool = False) -> None:
     # Suppress noisy libraries
     logging.getLogger('urllib3').setLevel(logging.WARNING)
     logging.getLogger('matplotlib').setLevel(logging.WARNING)
+    logging.getLogger('scapy.runtime').setLevel(logging.WARNING)
 
     logging.info("Logging initialized")
 
@@ -119,7 +146,7 @@ class NetMonDash:
         Args:
             interface: Network interface to use (None for auto-detect)
             port: Web server port
-            scan_interval: Scan interval in seconds
+            scan_interval: Scan interval in seconds (used as deep scan interval)
             enable_ai: Enable AI analysis
             verbose: Enable verbose logging
         """
@@ -129,6 +156,12 @@ class NetMonDash:
         self.running = False
         self.scan_task: Optional[asyncio.Task] = None
         self.cleanup_task: Optional[asyncio.Task] = None
+        self.discovery_task: Optional[asyncio.Task] = None
+
+        # Track MACs pending a deep scan
+        self._deep_scan_queue: asyncio.Queue = None  # created in lifespan
+        self._deep_scanned_macs: Set[str] = set()
+        self._last_full_deep_scan: float = 0.0
 
         # Setup logging
         setup_logging(verbose)
@@ -139,13 +172,14 @@ class NetMonDash:
 
         # --- Startup validation: nmap ---
         logger.info("Checking nmap availability...")
-        if not check_nmap_available():
-            logger.error(
-                "nmap is not installed or not found on PATH. "
-                "Please install nmap (e.g. 'sudo apt install nmap') and try again."
+        self._nmap_available = check_nmap_available()
+        if self._nmap_available:
+            logger.info("nmap found — deep scans enabled")
+        else:
+            logger.warning(
+                "nmap not found — deep scans disabled. "
+                "ARP-based discovery will still work."
             )
-            sys.exit(1)
-        logger.info("nmap found")
 
         # --- Startup validation: network interfaces ---
         logger.info("Detecting network interfaces...")
@@ -191,9 +225,24 @@ class NetMonDash:
         self.db = init_database()
         logger.info("Database initialized")
 
-        # Scanner
+        # Scanner (still used for deep scans and WiFi)
         self.scanner = NetworkScanner(interface=self.interface.name)
-        logger.info(f"Scanner initialized (interval: {self.scan_interval}s)")
+        logger.info("Scanner initialized")
+
+        # Discovery Engine (lightweight ARP-based)
+        self._event_loop: Optional[asyncio.AbstractEventLoop] = None
+        self.discovery = DiscoveryEngine(
+            interface=self.interface.name,
+            event_callback=self._on_discovery_event,
+            active_interval=DISCOVERY_ACTIVE_INTERVAL,
+            stale_timeout=DISCOVERY_STALE_TIMEOUT,
+            batch_interval=DISCOVERY_BATCH_INTERVAL,
+        )
+        logger.info(
+            "Discovery engine initialized (active every %ds, stale timeout %ds)",
+            DISCOVERY_ACTIVE_INTERVAL,
+            DISCOVERY_STALE_TIMEOUT,
+        )
 
         # AI Analyzer
         if self.enable_ai:
@@ -211,9 +260,7 @@ class NetMonDash:
         self.notifier = Notifier()
         logger.info("Notifier initialized")
 
-        # The asyncio.Event used for manual scan triggers.  Created here so
-        # it can be stored in app.state before the event loop starts; the
-        # actual Event object is bound to the running loop inside lifespan.
+        # The asyncio.Event used for manual scan triggers.
         self._scan_now_event: Optional[asyncio.Event] = None
 
         # Build FastAPI application with lifespan
@@ -234,14 +281,25 @@ class NetMonDash:
             logger.info("Lifespan startup: launching background tasks")
 
             self.running = True
+            self._event_loop = asyncio.get_running_loop()
 
             # Create the manual-scan trigger event on the current loop
             self._scan_now_event = asyncio.Event()
             app.state.scan_now_event = self._scan_now_event
 
-            # Launch background tasks
-            self.scan_task = asyncio.create_task(self.scan_loop())
+            # Deep scan queue
+            self._deep_scan_queue = asyncio.Queue()
+
+            # Store discovery engine in app state for routes
+            app.state.discovery = self.discovery
+
+            # Start the discovery engine (background threads)
+            self.discovery.start()
+
+            # Launch async background tasks
+            self.scan_task = asyncio.create_task(self.deep_scan_loop())
             self.cleanup_task = asyncio.create_task(self.cleanup_loop())
+            self.discovery_task = asyncio.create_task(self._process_deep_scan_queue())
 
             logger.info("Background tasks started")
 
@@ -251,13 +309,17 @@ class NetMonDash:
             logger.info("Lifespan shutdown: stopping background tasks")
             self.running = False
 
+            # Stop discovery engine threads
+            self.discovery.stop()
+
             # Signal the scan event so the loop can exit promptly
             if self._scan_now_event is not None:
                 self._scan_now_event.set()
 
             for task, name in [
-                (self.scan_task, "scan_loop"),
+                (self.scan_task, "deep_scan_loop"),
                 (self.cleanup_task, "cleanup_loop"),
+                (self.discovery_task, "deep_scan_queue_processor"),
             ]:
                 if task is not None:
                     task.cancel()
@@ -282,143 +344,345 @@ class NetMonDash:
         return app
 
     # ------------------------------------------------------------------
-    # Background: network scan loop
+    # Discovery event handler (called from background thread)
     # ------------------------------------------------------------------
 
-    async def scan_loop(self) -> None:
-        """Background task for periodic network scanning."""
-        logger.info("Starting scan loop...")
+    def _on_discovery_event(
+        self, event_type: str, devices: List[DiscoveredDevice]
+    ):
+        """Handle batched discovery events from the DiscoveryEngine.
+
+        This runs on a background thread, so we schedule async work on
+        the main event loop.
+        """
+        if self._event_loop is None or not self.running:
+            return
+
+        asyncio.run_coroutine_threadsafe(
+            self._handle_discovery_async(event_type, devices),
+            self._event_loop,
+        )
+
+    async def _handle_discovery_async(
+        self, event_type: str, devices: List[DiscoveredDevice]
+    ):
+        """Async handler for discovery events — updates DB and broadcasts."""
+        try:
+            for dev in devices:
+                if event_type == "device_joined":
+                    # Check if this is truly new to the DB
+                    existing = self.db.get_device(dev.mac)
+                    if not existing:
+                        logger.info(
+                            "New device discovered via ARP: %s (%s) vendor=%s",
+                            dev.ip, dev.mac, dev.vendor,
+                        )
+                        self.notifier.notify_new_device(dev.ip, dev.mac, None)
+
+                    # Quick ping for baseline latency (non-blocking)
+                    loop = asyncio.get_running_loop()
+                    ping_data = await loop.run_in_executor(
+                        None,
+                        lambda ip=dev.ip: self.scanner.ping_host_detailed(
+                            ip, count=2, timeout=1
+                        ),
+                    )
+
+                    # Upsert into database with latency
+                    self.db.add_or_update_device(
+                        mac=dev.mac,
+                        ip=dev.ip,
+                        vendor=dev.vendor,
+                        latency_ms=ping_data.get("avg_ms"),
+                        jitter_ms=ping_data.get("jitter_ms"),
+                        packet_loss=ping_data.get("packet_loss"),
+                        ttl=ping_data.get("ttl"),
+                    )
+
+                    # Queue for deep nmap scan if nmap available
+                    if (
+                        self._nmap_available
+                        and dev.mac not in self._deep_scanned_macs
+                        and self._deep_scan_queue is not None
+                    ):
+                        await self._deep_scan_queue.put(dev)
+
+                elif event_type == "device_left":
+                    logger.info(
+                        "Device went offline: %s (%s)", dev.ip, dev.mac
+                    )
+                    self.notifier.notify_device_offline(dev.ip, None)
+                    # Mark offline in DB: pass currently-online MACs so that
+                    # any device NOT in this set gets marked offline.
+                    # The registry has already flipped this device to offline,
+                    # so get_online_macs() returns the correct remaining set.
+                    remaining_online = self.discovery.registry.get_online_macs()
+                    self.db.mark_devices_offline(list(remaining_online))
+
+                elif event_type == "device_ip_changed":
+                    logger.info(
+                        "Device %s changed IP to %s", dev.mac, dev.ip
+                    )
+                    self.db.add_or_update_device(
+                        mac=dev.mac,
+                        ip=dev.ip,
+                        vendor=dev.vendor,
+                    )
+
+            # Broadcast to WebSocket clients (batched)
+            await broadcast_discovery_batch(event_type, devices)
+
+        except Exception as e:
+            logger.error("Error handling discovery event %s: %s", event_type, e)
+
+    # ------------------------------------------------------------------
+    # Background: process deep scan queue (new devices)
+    # ------------------------------------------------------------------
+
+    async def _process_deep_scan_queue(self):
+        """Consume the deep-scan queue — nmap new devices one at a time."""
+        logger.info("Deep scan queue processor started")
 
         while self.running:
             try:
-                logger.info("Performing network scan...")
-                scan_start = time.time()
-
-                # Perform scan (blocking I/O; run in executor so we don't
-                # block the event loop)
-                loop = asyncio.get_running_loop()
-                devices = await loop.run_in_executor(
-                    None, lambda: self.scanner.scan_network(service_detection=False)
+                dev = await asyncio.wait_for(
+                    self._deep_scan_queue.get(),
+                    timeout=5.0,
                 )
-                scan_duration = time.time() - scan_start
 
-                logger.info(f"Scan complete: {len(devices)} devices found in {scan_duration:.2f}s")
+                # Brief delay so ARP info can settle
+                await asyncio.sleep(DEEP_SCAN_NEW_DEVICE_DELAY)
 
-                # Track new devices
-                existing_macs = set()
-                new_devices = []
+                if not self.running:
+                    break
 
-                for device in devices:
-                    if not device.mac:
-                        continue
+                if dev.mac in self._deep_scanned_macs:
+                    continue
 
-                    # Check if device exists
-                    existing = self.db.get_device(device.mac)
+                logger.info(
+                    "Deep scanning new device %s (%s)...", dev.ip, dev.mac
+                )
+                loop = asyncio.get_running_loop()
+                device_info = await loop.run_in_executor(
+                    None,
+                    lambda: self.scanner.deep_scan_device(dev.ip),
+                )
 
-                    if not existing:
-                        new_devices.append(device)
-                        logger.info(f"New device detected: {device.ip} ({device.mac})")
+                if device_info and device_info.mac:
+                    self.db.add_or_update_device(
+                        mac=device_info.mac,
+                        ip=device_info.ip,
+                        hostname=device_info.hostname,
+                        vendor=device_info.vendor or dev.vendor,
+                        open_ports=device_info.open_ports,
+                        services=device_info.services,
+                        latency_ms=device_info.latency_ms,
+                        os_guess=device_info.os_guess,
+                        jitter_ms=device_info.jitter_ms,
+                        packet_loss=device_info.packet_loss,
+                        ttl=device_info.ttl,
+                    )
+                    await broadcast_device_update(device_info.to_dict(), event="deep_scanned")
+                    self._deep_scanned_macs.add(dev.mac)
+                    logger.info(
+                        "Deep scan complete for %s: %d ports, os=%s",
+                        dev.ip,
+                        len(device_info.open_ports),
+                        device_info.os_guess,
+                    )
 
-                        # Send notification
-                        self.notifier.notify_new_device(
-                            device.ip,
-                            device.mac,
-                            device.hostname
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("Deep scan queue error: %s", e)
+                await asyncio.sleep(2)
+
+        logger.info("Deep scan queue processor stopped")
+
+    # ------------------------------------------------------------------
+    # Background: periodic full deep scan (every 30 min)
+    # ------------------------------------------------------------------
+
+    async def deep_scan_loop(self) -> None:
+        """Periodic full nmap scan at a long interval (default 30 min).
+
+        This replaces the old scan_loop.  Between deep scans, the
+        DiscoveryEngine handles real-time device tracking via ARP.
+        """
+        deep_interval = max(self.scan_interval, DEEP_SCAN_INTERVAL)
+        logger.info(
+            "Starting deep scan loop (interval: %ds)...", deep_interval
+        )
+
+        while self.running:
+            try:
+                if not self._nmap_available:
+                    # No nmap — just record discovery stats periodically
+                    registry_snapshot = self.discovery.registry.get_online()
+                    online_macs = {d.mac for d in registry_snapshot}
+
+                    # Sync the DB with the discovery registry
+                    for dev in registry_snapshot:
+                        self.db.add_or_update_device(
+                            mac=dev.mac, ip=dev.ip, vendor=dev.vendor,
+                        )
+                    self.db.mark_devices_offline(list(online_macs))
+
+                    self.db.add_scan(
+                        interface=self.interface.name,
+                        device_count=len(registry_snapshot),
+                        scan_type="arp_discovery",
+                        duration_seconds=0,
+                    )
+
+                    await broadcast_scan_update({
+                        "device_count": len(registry_snapshot),
+                        "scan_type": "arp_discovery",
+                        "new_devices": 0,
+                        "offline_devices": 0,
+                        "duration": 0,
+                    })
+
+                else:
+                    # Full nmap scan
+                    logger.info("Starting periodic deep nmap scan...")
+                    scan_start = time.time()
+
+                    loop = asyncio.get_running_loop()
+                    devices = await loop.run_in_executor(
+                        None,
+                        lambda: self.scanner.scan_network(
+                            service_detection=False
+                        ),
+                    )
+                    scan_duration = time.time() - scan_start
+
+                    logger.info(
+                        "Deep scan complete: %d devices in %.2fs",
+                        len(devices), scan_duration,
+                    )
+
+                    # Track new devices
+                    existing_macs = set()
+                    new_devices = []
+
+                    for device in devices:
+                        if not device.mac:
+                            continue
+
+                        existing = self.db.get_device(device.mac)
+                        if not existing:
+                            new_devices.append(device)
+                            logger.info(
+                                "New device (deep scan): %s (%s)",
+                                device.ip, device.mac,
+                            )
+                            self.notifier.notify_new_device(
+                                device.ip, device.mac, device.hostname
+                            )
+                            await broadcast_device_update(
+                                device.to_dict(), event="new"
+                            )
+
+                        # Update database with full scan results
+                        self.db.add_or_update_device(
+                            mac=device.mac,
+                            ip=device.ip,
+                            hostname=device.hostname,
+                            vendor=device.vendor,
+                            open_ports=device.open_ports,
+                            services=device.services,
                         )
 
-                        # Broadcast new-device event over WebSocket
-                        await broadcast_device_update(device.to_dict(), event="new")
+                        # Feed into discovery registry too
+                        self.discovery.registry.upsert(
+                            device.mac, device.ip,
+                            vendor=device.vendor, source="nmap",
+                        )
 
-                    # Update database
-                    self.db.add_or_update_device(
-                        mac=device.mac,
-                        ip=device.ip,
-                        hostname=device.hostname,
-                        vendor=device.vendor,
-                        open_ports=device.open_ports,
-                        services=device.services,
+                        existing_macs.add(device.mac)
+                        self._deep_scanned_macs.add(device.mac)
+
+                    # Mark offline
+                    offline_count, offline_devices = self.db.mark_devices_offline(
+                        list(existing_macs)
+                    )
+                    for dev_dict in offline_devices:
+                        self.notifier.notify_device_offline(
+                            dev_dict.get("ip", "unknown"),
+                            dev_dict.get("hostname"),
+                        )
+                        await broadcast_device_update(dev_dict, event="offline")
+
+                    if offline_count > 0:
+                        logger.info("%d device(s) went offline", offline_count)
+
+                    # Record scan
+                    scan_record = self.db.add_scan(
+                        interface=self.interface.name,
+                        device_count=len(devices),
+                        scan_type="deep_nmap",
+                        duration_seconds=scan_duration,
+                        raw_data=self.scanner.get_scan_summary(),
+                        new_device_count=len(new_devices),
+                        offline_device_count=offline_count,
                     )
 
-                    existing_macs.add(device.mac)
+                    await broadcast_scan_update({
+                        "scan_id": scan_record.id,
+                        "device_count": len(devices),
+                        "scan_type": "deep_nmap",
+                        "new_devices": len(new_devices),
+                        "offline_devices": offline_count,
+                        "duration": scan_duration,
+                    })
 
-                # Mark offline devices and handle notifications
-                offline_count, offline_devices = self.db.mark_devices_offline(list(existing_macs))
+                    # AI analysis
+                    if self.ai_analyzer and (new_devices or len(devices) > 0):
+                        try:
+                            scan_data = self.scanner.get_scan_summary()
+                            insights = self.ai_analyzer.get_quick_insights(
+                                scan_data
+                            )
+                            for insight in insights:
+                                logger.info("AI Insight: %s", insight)
+                        except Exception as e:
+                            logger.error("AI analysis failed: %s", e)
 
-                for dev_dict in offline_devices:
-                    self.notifier.notify_device_offline(
-                        dev_dict.get("ip", "unknown"),
-                        dev_dict.get("hostname"),
-                    )
-                    await broadcast_device_update(dev_dict, event="offline")
+                    self._last_full_deep_scan = time.time()
 
-                if offline_count > 0:
-                    logger.info(f"{offline_count} device(s) went offline")
-
-                # Record scan with complete metrics
-                scan_record = self.db.add_scan(
-                    interface=self.interface.name,
-                    device_count=len(devices),
-                    scan_type='network',
-                    duration_seconds=scan_duration,
-                    raw_data=self.scanner.get_scan_summary(),
-                    new_device_count=len(new_devices),
-                    offline_device_count=offline_count,
+                # Wait for next deep scan interval or manual trigger
+                logger.debug(
+                    "Waiting %ds until next deep scan...", deep_interval
                 )
-
-                # Broadcast update via WebSocket
-                await broadcast_scan_update({
-                    'scan_id': scan_record.id,
-                    'device_count': len(devices),
-                    'new_devices': len(new_devices),
-                    'offline_devices': offline_count,
-                    'duration': scan_duration,
-                })
-
-                # Perform AI analysis if enabled and new devices found
-                if self.ai_analyzer and (new_devices or len(devices) > 0):
-                    logger.info("Performing AI analysis...")
-                    try:
-                        scan_data = self.scanner.get_scan_summary()
-                        insights = self.ai_analyzer.get_quick_insights(scan_data)
-
-                        # Log insights
-                        for insight in insights:
-                            logger.info(f"AI Insight: {insight}")
-
-                    except Exception as e:
-                        logger.error(f"AI analysis failed: {e}")
-
-                # Wait for the next scan interval OR a manual trigger
-                logger.debug(f"Waiting {self.scan_interval}s until next scan...")
                 try:
                     await asyncio.wait_for(
                         self._scan_now_event.wait(),
-                        timeout=self.scan_interval,
+                        timeout=deep_interval,
                     )
-                    # If we reach here, the event was set (manual trigger)
                     logger.info("Manual scan trigger received")
                     self._scan_now_event.clear()
                 except asyncio.TimeoutError:
-                    # Normal interval elapsed
                     pass
 
             except asyncio.CancelledError:
-                logger.info("Scan loop cancelled")
+                logger.info("Deep scan loop cancelled")
                 break
 
             except Exception as e:
-                logger.error(f"Error in scan loop: {e}", exc_info=True)
-                # Even after an error, respect the interval / manual trigger
+                logger.error("Error in deep scan loop: %s", e, exc_info=True)
                 try:
                     await asyncio.wait_for(
                         self._scan_now_event.wait(),
-                        timeout=self.scan_interval,
+                        timeout=deep_interval,
                     )
                     self._scan_now_event.clear()
                 except (asyncio.TimeoutError, asyncio.CancelledError):
                     pass
 
-        logger.info("Scan loop stopped")
+        logger.info("Deep scan loop stopped")
 
     # ------------------------------------------------------------------
     # Background: periodic data cleanup
@@ -461,14 +725,10 @@ class NetMonDash:
         def signal_handler(sig, frame):
             logger.info("Shutdown signal received (%s)", signal.Signals(sig).name)
             self.running = False
-            # Uvicorn's own signal handling will take care of stopping the
-            # server; we just ensure the flag is toggled.
 
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
 
-        # Run web server -- the lifespan context manager handles the
-        # background tasks on the same event loop.
         try:
             uvicorn.run(
                 self.app,
@@ -481,6 +741,7 @@ class NetMonDash:
             logger.error(f"Server error: {e}", exc_info=True)
         finally:
             self.running = False
+            self.discovery.stop()
             logger.info("NetMonDash shut down")
 
 

@@ -35,6 +35,13 @@ NMAP_SERVICE_DETECTION_ARGS = ["-sV", "-T4", "--version-light"]
 NMAP_TIMEOUT = 300  # seconds
 SCAN_THREAD_POOL_SIZE = 4
 
+# Lightweight Discovery Configuration (ARP-based)
+DISCOVERY_ACTIVE_INTERVAL = 15  # seconds between active ARP sweeps
+DISCOVERY_STALE_TIMEOUT = 120   # seconds before marking a device offline
+DISCOVERY_BATCH_INTERVAL = 1.0  # seconds to coalesce events before flushing
+DEEP_SCAN_INTERVAL = 1800       # seconds between full nmap re-scans (30 min)
+DEEP_SCAN_NEW_DEVICE_DELAY = 5  # seconds to wait before deep-scanning a new device
+
 # WiFi Signal Thresholds (dBm)
 SIGNAL_EXCELLENT = -50
 SIGNAL_GOOD = -60

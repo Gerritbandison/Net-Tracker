@@ -2,9 +2,10 @@
 Unit tests for the notifier module.
 """
 
+import smtplib
 import subprocess
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -685,6 +686,236 @@ class TestEdgeCases:
 
         _, kwargs = mock_run.call_args
         assert kwargs["timeout"] == 2
+
+
+# ---- Backend classes --------------------------------------------------------
+
+
+from modules.notifier import (
+    NotifierBackend,
+    DesktopBackend,
+    WebhookBackend,
+    EmailBackend,
+)
+
+
+class TestDesktopBackend:
+    """Tests for the DesktopBackend class."""
+
+    @patch("modules.notifier.subprocess.run")
+    def test_available_when_notify_send_found(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+        backend = DesktopBackend()
+        assert backend.available is True
+
+    @patch("modules.notifier.subprocess.run")
+    def test_unavailable_when_notify_send_missing(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1)
+        backend = DesktopBackend()
+        assert backend.available is False
+
+    @patch("modules.notifier.subprocess.run")
+    def test_send_returns_false_when_unavailable(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1)
+        backend = DesktopBackend()
+        assert backend.send("T", "M") is False
+
+    @patch("modules.notifier.subprocess.run")
+    def test_send_success(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+        backend = DesktopBackend()
+        result = backend.send("Title", "Body", urgency="normal", icon="test-icon")
+        assert result is True
+
+    @patch("modules.notifier.subprocess.run")
+    def test_send_includes_correct_args(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+        backend = DesktopBackend()
+        backend.send("T", "M", urgency="critical", timeout=5000, icon="my-icon")
+        cmd = mock_run.call_args[0][0]
+        assert "notify-send" == cmd[0]
+        assert "--urgency=critical" in cmd
+        assert "--expire-time=5000" in cmd
+        assert "--icon=my-icon" in cmd
+
+
+class TestWebhookBackend:
+    """Tests for the WebhookBackend class."""
+
+    def test_detect_slack(self):
+        assert WebhookBackend._detect_service("https://hooks.slack.com/services/XXX") == "slack"
+
+    def test_detect_discord(self):
+        assert WebhookBackend._detect_service("https://discord.com/api/webhooks/123/abc") == "discord"
+
+    def test_detect_teams(self):
+        assert WebhookBackend._detect_service("https://webhook.office.com/xxx") == "teams"
+
+    def test_detect_generic(self):
+        assert WebhookBackend._detect_service("https://example.com/hook") == "generic"
+
+    def test_build_slack_payload(self):
+        backend = WebhookBackend("https://hooks.slack.com/services/XXX")
+        payload = backend._build_payload("Title", "Body", "critical")
+        assert "attachments" in payload
+        assert payload["attachments"][0]["title"] == "Title"
+        assert payload["attachments"][0]["color"] == "#ff0000"
+
+    def test_build_discord_payload(self):
+        backend = WebhookBackend("https://discord.com/api/webhooks/123/abc")
+        payload = backend._build_payload("Title", "Body", "normal")
+        assert "embeds" in payload
+        assert payload["embeds"][0]["title"] == "Title"
+
+    def test_build_teams_payload(self):
+        backend = WebhookBackend("https://webhook.office.com/xxx")
+        payload = backend._build_payload("Title", "Body", "low")
+        assert payload["@type"] == "MessageCard"
+        assert payload["sections"][0]["activityTitle"] == "Title"
+
+    def test_build_generic_payload(self):
+        backend = WebhookBackend("https://example.com/hook")
+        payload = backend._build_payload("Title", "Body", "normal")
+        assert payload["title"] == "Title"
+        assert payload["message"] == "Body"
+        assert payload["source"] == "NetMonDash"
+
+    @patch("modules.notifier.requests.post")
+    def test_send_success(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_post.return_value = mock_resp
+
+        backend = WebhookBackend("https://example.com/hook")
+        assert backend.send("Title", "Body") is True
+        mock_post.assert_called_once()
+
+    @patch("modules.notifier.requests.post")
+    def test_send_failure_status(self, mock_post):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.text = "Internal Server Error"
+        mock_post.return_value = mock_resp
+
+        backend = WebhookBackend("https://example.com/hook")
+        assert backend.send("Title", "Body") is False
+
+    @patch("modules.notifier.requests.post", side_effect=Exception("Network error"))
+    def test_send_exception(self, mock_post):
+        backend = WebhookBackend("https://example.com/hook")
+        assert backend.send("Title", "Body") is False
+
+    def test_custom_headers(self):
+        backend = WebhookBackend(
+            "https://example.com/hook",
+            headers={"Authorization": "Bearer token123"},
+        )
+        assert "Authorization" in backend.headers
+        assert backend.headers["Authorization"] == "Bearer token123"
+
+    def test_force_service_type(self):
+        backend = WebhookBackend("https://example.com/hook", service="slack")
+        assert backend.service == "slack"
+
+
+class TestEmailBackend:
+    """Tests for the EmailBackend class."""
+
+    def test_no_recipients_returns_false(self):
+        backend = EmailBackend("smtp.example.com", recipients=[])
+        assert backend.send("Title", "Body") is False
+
+    @patch("modules.notifier.smtplib.SMTP")
+    def test_send_success(self, mock_smtp_class):
+        mock_server = MagicMock()
+        mock_smtp_class.return_value.__enter__ = Mock(return_value=mock_server)
+        mock_smtp_class.return_value.__exit__ = Mock(return_value=False)
+
+        backend = EmailBackend(
+            "smtp.example.com",
+            smtp_port=587,
+            username="user@example.com",
+            password="pass123",
+            recipients=["admin@example.com"],
+        )
+        result = backend.send("Alert", "Something happened", urgency="critical")
+        assert result is True
+        mock_server.starttls.assert_called_once()
+        mock_server.login.assert_called_once_with("user@example.com", "pass123")
+        mock_server.sendmail.assert_called_once()
+
+    @patch("modules.notifier.smtplib.SMTP", side_effect=smtplib.SMTPException("Connection refused"))
+    def test_send_smtp_error(self, mock_smtp_class):
+        backend = EmailBackend(
+            "smtp.example.com",
+            recipients=["admin@example.com"],
+        )
+        assert backend.send("Title", "Body") is False
+
+    def test_from_addr_defaults_to_username(self):
+        backend = EmailBackend("smtp.example.com", username="user@test.com")
+        assert backend.from_addr == "user@test.com"
+
+    def test_from_addr_override(self):
+        backend = EmailBackend(
+            "smtp.example.com",
+            username="user@test.com",
+            from_addr="noreply@test.com",
+        )
+        assert backend.from_addr == "noreply@test.com"
+
+
+class TestNotifierMultiBackend:
+    """Tests for using multiple backends with the Notifier."""
+
+    def test_notifier_with_custom_backends(self):
+        mock_backend1 = MagicMock(spec=NotifierBackend)
+        mock_backend1.send.return_value = True
+        mock_backend2 = MagicMock(spec=NotifierBackend)
+        mock_backend2.send.return_value = True
+
+        notifier = Notifier(enabled=True, backends=[mock_backend1, mock_backend2])
+
+        with patch("modules.notifier.NOTIFY_ON_NEW_DEVICE", True):
+            result = notifier.notify_new_device("192.168.1.1", "AA:BB:CC:DD:EE:FF")
+
+        assert result is True
+        mock_backend1.send.assert_called_once()
+        mock_backend2.send.assert_called_once()
+
+    def test_notifier_one_backend_fails_others_still_called(self):
+        mock_good = MagicMock(spec=NotifierBackend)
+        mock_good.send.return_value = True
+        mock_bad = MagicMock(spec=NotifierBackend)
+        mock_bad.send.return_value = False
+
+        notifier = Notifier(enabled=True, backends=[mock_bad, mock_good])
+        result = notifier.send_notification("T", "M")
+
+        assert result is True  # At least one succeeded
+        mock_bad.send.assert_called_once()
+        mock_good.send.assert_called_once()
+
+    def test_notifier_all_backends_fail(self):
+        mock_bad = MagicMock(spec=NotifierBackend)
+        mock_bad.send.return_value = False
+
+        notifier = Notifier(enabled=True, backends=[mock_bad])
+        result = notifier.send_notification("T", "M")
+        assert result is False
+
+    def test_notifier_backend_exception_doesnt_crash(self):
+        mock_bad = MagicMock(spec=NotifierBackend)
+        mock_bad.send.side_effect = RuntimeError("Boom!")
+        mock_good = MagicMock(spec=NotifierBackend)
+        mock_good.send.return_value = True
+
+        notifier = Notifier(enabled=True, backends=[mock_bad, mock_good])
+        result = notifier.send_notification("T", "M")
+
+        # Good backend still runs despite bad one crashing
+        assert result is True
+        mock_good.send.assert_called_once()
 
 
 if __name__ == "__main__":
